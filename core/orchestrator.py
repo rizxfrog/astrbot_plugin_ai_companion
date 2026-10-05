@@ -1,0 +1,245 @@
+"""编排层：把「一条消息」串成 记录 → 决策 → 生成 的完整流程。
+
+与平台链路的衔接方式（本设计的核心，也是与自建上下文方案最大的区别）：
+
+* 注册一个消息 handler，既让本插件能拿到群聊中的**非唤醒消息**用于记录，
+  又能在决策为「回复」时通过 ``yield event.request_llm(...)`` 复用平台整条 Agent 链路
+  ——人格、Skills、工具、其他插件的 ``on_llm_request`` 注入全部免费获得。
+* 决策为「不回复」时，通过 ``event.should_call_llm(True)`` 阻止平台默认 LLM。
+  该标记**不会**打断其他插件的 handler（区别于 ``stop_event``）。
+* 群聊中未被 @ 的消息，平台默认链路本来就不会调用 LLM
+  （``is_at_or_wake_command`` 为假），因此「决定回复」时才需要本插件主动发起请求。
+
+短期对话历史由平台 conversation 提供，长期记忆由本插件的数据库提供。
+"""
+
+from __future__ import annotations
+
+import time
+from dataclasses import dataclass, field
+from typing import Any
+
+from astrbot.api import logger
+
+from ..context import format_for_model, render_chain
+from ..decision import DecisionChain, TurnContext
+
+MANAGED_KEY = "_ai_companion_managed"
+RECORDED_KEY = "_ai_companion_recorded"
+
+
+@dataclass
+class TurnResult:
+    """一次消息处理的结论，供 main.py 决定如何生成回复。"""
+
+    handled: bool = False
+    should_reply: bool = False
+    reason: str = ""
+    prompt: str = ""
+    conversation: Any = None
+    extra_parts: list = field(default_factory=list)
+
+
+class Orchestrator:
+    """聊天主流程编排。"""
+
+    def __init__(
+        self,
+        *,
+        config: Any,
+        registry: Any,
+        chain: DecisionChain,
+        db: Any,
+        assembler: Any,
+        conversation_manager: Any,
+    ) -> None:
+        self.config = config
+        self.registry = registry
+        self.chain = chain
+        self.db = db
+        self.assembler = assembler
+        self.conversation_manager = conversation_manager
+        self._seen: dict[str, float] = {}
+
+    # ------------------------------------------------------------------
+    async def handle_message(self, event: Any) -> TurnResult:
+        """处理一条入站消息。"""
+        cfg = self.config
+        is_private = bool(event.is_private_chat())
+        if not cfg.enabled_for(is_private=is_private):
+            return TurnResult()
+
+        if self._is_duplicate(event):
+            return TurnResult(handled=True, should_reply=False, reason="重复消息")
+
+        umo = event.unified_msg_origin
+        actor = self.registry.get(umo)
+        actor.bump_message()
+
+        sender_id = str(event.get_sender_id() or "")
+        sender_name = str(event.get_sender_name() or "")
+        self_id = str(event.get_self_id() or "")
+        text = render_chain(event.get_messages(), self_id=self_id)
+
+        if cfg.record_all_messages:
+            await self._record_user(
+                umo=umo, event=event, sender_id=sender_id,
+                sender_name=sender_name, text=text,
+            )
+
+        # 其他插件已经回复过：不再插手，也不拦截
+        if getattr(event, "_has_send_oper", False):
+            return TurnResult(handled=True, should_reply=False, reason="已有其他发送行为")
+
+        ctx = TurnContext(
+            event=event,
+            umo=umo,
+            actor=actor,
+            config=cfg,
+            is_private=is_private,
+            is_wake=bool(getattr(event, "is_wake", False)),
+            is_command=self._is_command(event),
+            message_text=text,
+            sender_id=sender_id,
+            sender_name=sender_name,
+        )
+        decision = await self.chain.decide(ctx)
+
+        if not decision.should_reply:
+            self._block_default_llm(event)
+            if cfg.debug_mode:
+                logger.info(f"[ai_companion] {umo} 不回复（{decision.reason}）")
+            return TurnResult(handled=True, should_reply=False, reason=decision.reason)
+
+        if cfg.debug_mode:
+            logger.info(f"[ai_companion] {umo} 回复（{decision.reason}）")
+
+        event.set_extra(MANAGED_KEY, True)
+        conversation = await self._ensure_conversation(umo)
+        prompt = format_for_model(
+            sender_name=sender_name, sender_id=sender_id, content=text,
+        ) or (text or "[空消息]")
+
+        return TurnResult(
+            handled=True,
+            should_reply=True,
+            reason=decision.reason,
+            prompt=prompt,
+            conversation=conversation,
+            extra_parts=self.assembler.build_extra_parts(cfg),
+        )
+
+    # ------------------------------------------------------------------
+    async def handle_after_sent(self, event: Any) -> None:
+        """消息发送后归档 AI 回复并刷新运行态。"""
+        if not self.config.enabled_for(is_private=bool(event.is_private_chat())):
+            return
+        if event.get_extra(RECORDED_KEY):
+            return
+        text = self._extract_result_text(event)
+        if not text:
+            return
+        event.set_extra(RECORDED_KEY, True)
+
+        umo = event.unified_msg_origin
+        self.registry.get(umo).bump_reply()
+        if not self.config.record_all_messages:
+            return
+        try:
+            await self.db.insert_message(
+                umo=umo,
+                role="assistant",
+                content=text,
+                sender_id=str(event.get_self_id() or ""),
+                sender_name="bot",
+            )
+        except Exception as e:
+            logger.error(f"[ai_companion] 归档 AI 回复失败: {e}", exc_info=True)
+
+    # ------------------------------------------------------------------
+    async def inject(self, event: Any, req: Any) -> None:
+        """在 LLM 请求上追加系统提示词补充（当前时间等动态块由 main.py 注入）。"""
+        if not event.get_extra(MANAGED_KEY):
+            return
+        extra = (self.config.system_prompt_extra or "").strip()
+        if extra and extra not in (req.system_prompt or ""):
+            req.system_prompt = (req.system_prompt or "") + "\n" + extra
+
+    # ------------------------------------------------------------------
+    async def _ensure_conversation(self, umo: str) -> Any:
+        """取得（必要时创建）该会话当前对话，以便复用平台人格与历史。"""
+        cm = self.conversation_manager
+        if cm is None:
+            return None
+        try:
+            cid = await cm.get_curr_conversation_id(umo)
+            if not cid:
+                cid = await cm.new_conversation(umo)
+            return await cm.get_conversation(umo, cid)
+        except Exception as e:
+            logger.warning(f"[ai_companion] 获取对话失败，退化为无对话请求: {e}")
+            return None
+
+    async def _record_user(self, *, umo: str, event: Any, sender_id: str,
+                           sender_name: str, text: str) -> None:
+        try:
+            await self.db.insert_message(
+                umo=umo, role="user", content=text,
+                sender_id=sender_id, sender_name=sender_name, raw=_safe_raw(event),
+            )
+        except Exception as e:
+            logger.error(f"[ai_companion] 记录用户消息失败: {e}", exc_info=True)
+
+    def _is_duplicate(self, event: Any) -> bool:
+        mid = str(getattr(getattr(event, "message_obj", None), "message_id", "") or "")
+        if not mid:
+            return False
+        now = time.time()
+        if len(self._seen) > 512:
+            self._seen = {k: v for k, v in self._seen.items() if now - v < 60}
+        if mid in self._seen:
+            return True
+        self._seen[mid] = now
+        return False
+
+    @staticmethod
+    def _is_command(event: Any) -> bool:
+        try:
+            from astrbot.core.star.filter.command import CommandFilter
+
+            for handler in event.get_extra("activated_handlers") or []:
+                for flt in getattr(handler, "event_filters", []) or []:
+                    if isinstance(flt, CommandFilter):
+                        return True
+        except Exception:
+            pass
+        return False
+
+    @staticmethod
+    def _block_default_llm(event: Any) -> None:
+        try:
+            event.should_call_llm(True)
+        except Exception:
+            event.call_llm = True
+
+    @staticmethod
+    def _extract_result_text(event: Any) -> str:
+        try:
+            result = event.get_result()
+        except Exception:
+            return ""
+        chain = getattr(result, "chain", None) if result is not None else None
+        if not chain:
+            return ""
+        return render_chain(chain, self_id=str(event.get_self_id() or ""))
+
+
+def _safe_raw(event: Any) -> Any:
+    try:
+        chain = event.get_messages() or []
+        return [
+            c.toDict() if hasattr(c, "toDict") else str(getattr(c, "type", ""))
+            for c in chain
+        ]
+    except Exception:
+        return None

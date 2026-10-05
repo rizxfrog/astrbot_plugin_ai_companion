@@ -1,0 +1,86 @@
+{
+  "enable": {
+    "description": "🔌 启用拟人对话插件",
+    "type": "bool",
+    "default": true,
+    "hint": "总开关。关闭后插件不再接管任何消息（消息也不会落库）。"
+  },
+  "_decision_header": {
+    "description": "🧠 回复决策",
+    "type": "text",
+    "default": "",
+    "hint": "控制 AI 在多大程度上「像真人一样」决定是否接话。"
+  },
+  "enable_private_chat": {
+    "description": "开启私聊",
+    "type": "bool",
+    "default": true,
+    "hint": "私聊默认倾向回复；关闭后私聊消息只记录不回复。"
+  },
+  "enable_group_chat": {
+    "description": "开启群聊",
+    "type": "bool",
+    "default": true,
+    "hint": "群聊中只有在被唤醒（@机器人、引用机器人、唤醒前缀）时才会进入决策链。"
+  },
+  "reply_probability": {
+    "description": "基础回复概率",
+    "type": "float",
+    "default": 0.85,
+    "hint": "0~1。通过硬过滤、规则与限流后，按该概率决定是否回复。设为 1 表示总是回复。"
+  },
+  "ignore_command_messages": {
+    "description": "忽略指令消息",
+    "type": "bool",
+    "default": true,
+    "hint": "以唤醒前缀开头的指令消息（如 /help）默认由平台指令处理，插件不再接入决策。"
+  },
+  "min_reply_interval_seconds": {
+    "description": "同会话最小回复间隔 (秒)",
+    "type": "int",
+    "default": 3,
+    "hint": "同一会话在 N 秒内最多回复一次，避免刷屏。设为 0 关闭。"
+  },
+  "cooldown_after_unanswered": {
+    "description": "被无视后的冷却 (秒)",
+    "type": "int",
+    "default": 0,
+    "hint": "连续 N 次主动发言无人回应后进入冷却的时长。P0 暂未启用主动发言，保留配置。"
+  },
+  "_storage_header": {
+    "description": "🗄️ 记忆与存储",
+    "type": "text",
+    "default": "",
+    "hint": "所有消息都会写入插件自带的 SQLite 数据库，供后续检索与长期记忆使用。"
+  },
+  "record_all_messages": {
+    "description": "记录全部消息",
+    "type": "bool",
+    "default": true,
+    "hint": "开启后，即使 AI 决定不回复，消息也会写入数据库（真人也记得别人说过的话）。"
+  },
+  "_prompt_header": {
+    "description": "📝 提示词与人格",
+    "type": "text",
+    "default": "",
+    "hint": "本插件遵循「精简提示词」原则：仅注入人格与用户自定义补充，其余交给模型自身能力。"
+  },
+  "system_prompt_extra": {
+    "description": "额外系统提示词",
+    "type": "text",
+    "default": "",
+    "hint": "追加到系统提示词末尾。建议保持精简，不要写长篇规则。"
+  },
+  "inject_time": {
+    "description": "注入当前时间",
+    "type": "bool",
+    "default": true,
+    "hint": "作为临时内容块注入当前时间（不写入历史记录）。"
+  },
+  "debug_mode": {
+    "description": "调试日志",
+    "type": "bool",
+    "default": false,
+    "hint": "输出决策链每一层的判定结果，便于调参。"
+  }
+}

@@ -1,0 +1,6 @@
+# AI Companion 运行时依赖
+#
+# P0 阶段不引入任何第三方运行时依赖：数据库使用标准库 sqlite3，异步调度使用 asyncio，
+# 配置/序列化使用 json。因此本文件保持为空，仅作占位说明。
+#
+# 开发依赖（测试用）见 requirements-dev.txt。
