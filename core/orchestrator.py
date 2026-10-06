@@ -54,6 +54,7 @@ class Orchestrator:
         assembler: Any,
         conversation_manager: Any,
         context: Any = None,
+        compactor: Any = None,
     ) -> None:
         self.config = config
         self.registry = registry
@@ -62,6 +63,7 @@ class Orchestrator:
         self.assembler = assembler
         self.conversation_manager = conversation_manager
         self.context = context
+        self.compactor = compactor
         self._seen: dict[str, float] = {}
 
     # ------------------------------------------------------------------
@@ -121,6 +123,7 @@ class Orchestrator:
 
         event.set_extra(MANAGED_KEY, True)
         conversation = await self._ensure_conversation(umo)
+        conversation = await self._maybe_compact(umo, conversation)
         prompt = format_for_model(
             sender_name=sender_name, sender_id=sender_id, content=text,
         ) or (text or "[空消息]")
@@ -133,6 +136,28 @@ class Orchestrator:
             conversation=conversation,
             extra_parts=self.assembler.build_extra_parts(cfg),
         )
+
+    async def _maybe_compact(self, umo: str, conversation: Any) -> Any:
+        """历史过长时压缩，并返回压缩后的对话对象。"""
+        if self.compactor is None or conversation is None:
+            return conversation
+        try:
+            result = await self.compactor.maybe_compact(umo, conversation)
+        except Exception as e:
+            # 压缩失败绝不能影响正常回复
+            logger.error(f"[ai_companion] 记忆压缩异常: {e}", exc_info=True)
+            return conversation
+
+        if not result.compacted:
+            return conversation
+
+        # 重新读取，确保后续请求使用的是压缩后的历史
+        try:
+            cid = getattr(conversation, "cid", None)
+            refreshed = await self.conversation_manager.get_conversation(umo, cid)
+            return refreshed or conversation
+        except Exception:
+            return conversation
 
     # ------------------------------------------------------------------
     # 读空气实现

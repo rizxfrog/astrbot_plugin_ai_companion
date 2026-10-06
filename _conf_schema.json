@@ -78,6 +78,37 @@
     "default": true,
     "hint": "开启后，即使 AI 决定不回复，消息也会写入数据库（真人也记得别人说过的话）。"
   },
+  "enable_compact": {
+    "description": "启用短期记忆压缩",
+    "type": "bool",
+    "default": true,
+    "hint": "历史对话过长时，把最老的一段交给模型总结成摘要并替换原文，避免撑爆上下文窗口。近期原文与原始档案不会被改动。"
+  },
+  "compact_trigger_turns": {
+    "description": "压缩阈值 (消息条数)",
+    "type": "int",
+    "default": 60,
+    "hint": "当会话历史超过该条数时才触发压缩。设大一些可减少压缩频率。"
+  },
+  "compact_keep_recent": {
+    "description": "保留最近消息数",
+    "type": "int",
+    "default": 20,
+    "hint": "压缩时始终原样保留最近 N 条，只压缩更早的部分。"
+  },
+  "compact_min_dropped": {
+    "description": "最少压缩条数",
+    "type": "int",
+    "default": 10,
+    "hint": "可压缩内容少于该条数时不压缩，避免为了一点点内容频繁调用模型。"
+  },
+  "compact_provider_id": {
+    "description": "压缩使用的模型",
+    "type": "string",
+    "default": "",
+    "hint": "留空则使用默认模型。压缩是总结任务，建议使用便宜快速的模型。",
+    "_special": "select_provider"
+  },
   "_prompt_header": {
     "description": "📝 提示词与人格",
     "type": "text",

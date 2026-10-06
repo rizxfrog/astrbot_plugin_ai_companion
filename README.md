@@ -24,7 +24,7 @@
 
 ---
 
-## 已实现（P0 + P1）
+## 已实现（P0 + P1 + P2）
 
 - **统一群聊 / 私聊**：一个入口处理所有会话，决策链内部区分场景。
 - **回复决策链**（可插拔，按成本从低到高短路）：
@@ -38,6 +38,9 @@
   上下文极小，又快又便宜，也不污染主对话历史。支持独立指定便宜模型与超时。
 - **每会话运行态注册表**：同时关注 N 个窗口，内存开销 ~1KB/会话，
   **不 per-window 常驻 Agent**；同会话串行（锁），跨会话并行。
+- **短期记忆压缩（P2）**：历史过长时，把最老的一段交给模型总结成摘要并替换原文，
+  腾出上下文窗口。近期原文与 checkpoint 原样保留，摘要**滚动合并**（早期远记忆不丢），
+  原始档案永不删改。压缩在平台会话锁内进行，失败时保持历史原样。
 - **全量消息落库**：即使 AI 决定不回复也会记录（真人也记得别人说过的话）。
 - **中文历史检索**：SQLite + FTS5 `trigram`；2 字符短词自动回退 `LIKE`。
 - **LLM 工具**：`search_chat_history`，模型需要时可自行翻聊天记录。
@@ -71,6 +74,11 @@ cp -r astrbot_plugin_ai_companion /path/to/AstrBot/data/plugins/
 | `ignore_command_messages` | true | 指令消息交给平台指令链路 |
 | `min_reply_interval_seconds` | 3 | 同会话最小回复间隔 |
 | `record_all_messages` | true | 记录全部消息 |
+| `enable_compact` | true | 启用短期记忆压缩 |
+| `compact_trigger_turns` | 60 | 历史超过该条数时触发压缩 |
+| `compact_keep_recent` | 20 | 始终保留最近 N 条原文 |
+| `compact_min_dropped` | 10 | 可压缩内容少于该条数则跳过 |
+| `compact_provider_id` | "" | 压缩专用模型（留空=默认模型） |
 | `system_prompt_extra` | "" | 额外系统提示词（建议精简） |
 | `inject_time` | true | 注入当前时间（临时块，不入历史） |
 | `debug_mode` | false | 输出每层决策结果 |
@@ -148,7 +156,7 @@ sequenceDiagram
 |----|------|------|
 | P0 | 决策链 / 注册表 / 落库 / 检索工具 | ✅ 已完成 |
 | P1 | LLM 读空气接入策略链 | ✅ 已完成 |
-| P2 | 短期记忆 compact（窗口不足时压缩沉淀） | 规划中 |
+| P2 | 短期记忆 compact（窗口不足时压缩沉淀） | ✅ 已完成 |
 | P3 | 主动消息（全局扫描 + 沉默触发 + 免打扰） | 规划中 |
 | P4 | 人物画像与关系图谱（`lookup_person` 工具） | 表已建 |
 | P5 | 事件线抽取与关系派生 | 表已建 |

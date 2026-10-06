@@ -68,6 +68,17 @@ class CompanionConfig:
             0, _as_int(self.raw.get("cooldown_after_unanswered"), 0)
         )
         self.record_all_messages = _as_bool(self.raw.get("record_all_messages"), True)
+        self.enable_compact = _as_bool(self.raw.get("enable_compact"), True)
+        self.compact_trigger_turns = max(
+            4, _as_int(self.raw.get("compact_trigger_turns"), 60)
+        )
+        self.compact_keep_recent = max(
+            0, _as_int(self.raw.get("compact_keep_recent"), 20)
+        )
+        self.compact_min_dropped = max(
+            1, _as_int(self.raw.get("compact_min_dropped"), 10)
+        )
+        self.compact_provider_id = _as_str(self.raw.get("compact_provider_id"), "")
         self.system_prompt_extra = _as_str(self.raw.get("system_prompt_extra"), "")
         self.inject_time = _as_bool(self.raw.get("inject_time"), True)
         self.debug_mode = _as_bool(self.raw.get("debug_mode"), False)

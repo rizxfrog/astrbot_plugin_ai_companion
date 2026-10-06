@@ -29,6 +29,7 @@ from .decision import (
     RateLimitDecider,
     RuleDecider,
 )
+from .memory import Compactor
 from .storage import MemoryDB
 from .tools import SearchHistoryTool
 
@@ -67,6 +68,14 @@ class AICompanionPlugin(Star):
             assembler=self.assembler,
             conversation_manager=getattr(self.context, "conversation_manager", None),
             context=self.context,
+            compactor=Compactor(
+                conversation_manager=getattr(
+                    self.context, "conversation_manager", None
+                ),
+                db=self.db,
+                context=self.context,
+                config=self.config,
+            ),
         )
 
         deciders: list = [
