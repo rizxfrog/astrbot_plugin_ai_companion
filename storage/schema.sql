@@ -60,45 +60,61 @@ CREATE TABLE IF NOT EXISTS session_state (
 );
 
 -- ============================================================
--- 人物画像（长期记忆：每个人一份）
+-- 人物与关系（长期记忆：全局，跨会话同一人）
+--
+-- 人的记忆是「对每个人都有一份印象，并且知道这些人彼此是什么关系」。
+-- 因此 entity_id 使用平台用户 ID（全局稳定），不做会话隔离：
+-- 同一个人在不同群里仍是同一个人。
 -- ============================================================
-CREATE TABLE IF NOT EXISTS profiles (
-    entity_id     TEXT    NOT NULL,
-    umo_scope     TEXT    NOT NULL DEFAULT '',   -- '' = 全局（跨会话可见）
-    display_name  TEXT    NOT NULL DEFAULT '',
-    traits        TEXT    NOT NULL DEFAULT '[]', -- JSON: ["开朗", "话痨"]
-    style         TEXT    NOT NULL DEFAULT '',   -- 说话风格观察
-    affinity      REAL    NOT NULL DEFAULT 0.0,  -- 好感度（预留给后续版本）
-    first_seen    REAL    NOT NULL DEFAULT 0,
-    last_seen     REAL    NOT NULL DEFAULT 0,
-    updated_at    REAL    NOT NULL DEFAULT 0,
-    PRIMARY KEY (entity_id, umo_scope)
+
+-- 实体（人）
+CREATE TABLE IF NOT EXISTS entities (
+    entity_id         TEXT PRIMARY KEY,
+    last_name         TEXT NOT NULL DEFAULT '',
+    first_seen        REAL NOT NULL DEFAULT 0,
+    last_seen         REAL NOT NULL DEFAULT 0,
+    interaction_count INTEGER NOT NULL DEFAULT 0
 );
 
--- 别名归一：昵称 / @ / 平台 ID -> 稳定 entity_id
+-- 别名归一：昵称 / 群名片 / @ 显示名 -> entity_id
 CREATE TABLE IF NOT EXISTS entity_aliases (
-    umo_scope  TEXT NOT NULL DEFAULT '',
-    alias      TEXT NOT NULL,
+    alias      TEXT PRIMARY KEY,
     entity_id  TEXT NOT NULL,
-    updated_at REAL NOT NULL DEFAULT 0,
-    PRIMARY KEY (umo_scope, alias)
+    updated_at REAL NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_aliases_entity ON entity_aliases(entity_id);
+
+-- 人物画像：对每个人的一份印象
+CREATE TABLE IF NOT EXISTS profiles (
+    entity_id   TEXT PRIMARY KEY,
+    traits      TEXT NOT NULL DEFAULT '[]',
+    style       TEXT NOT NULL DEFAULT '',
+    notes       TEXT NOT NULL DEFAULT '',
+    affinity    REAL NOT NULL DEFAULT 0.0,
+    updated_at  REAL NOT NULL DEFAULT 0
 );
 
--- ============================================================
--- 人与人之间的关系（预留给后续版本：姐妹 / 恋人 / 同事 …）
--- ============================================================
+-- 关系图谱：A 与 B 是什么关系（姐妹 / 恋人 / 同事 …）
 CREATE TABLE IF NOT EXISTS relations (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
-    umo_scope          TEXT NOT NULL DEFAULT '',
     subject_id         TEXT NOT NULL,
-    predicate          TEXT NOT NULL,            -- 关系名，如「姐妹」「恋人」
+    predicate          TEXT NOT NULL,
     object_id          TEXT NOT NULL,
     strength           REAL NOT NULL DEFAULT 0.5,
-    evidence_event_ids TEXT NOT NULL DEFAULT '[]',
+    evidence           TEXT NOT NULL DEFAULT '[]',
     last_reinforced    REAL NOT NULL DEFAULT 0,
-    created_at         REAL NOT NULL DEFAULT 0
+    created_at         REAL NOT NULL DEFAULT 0,
+    UNIQUE(subject_id, predicate, object_id)
 );
-CREATE INDEX IF NOT EXISTS idx_relations_subject ON relations(umo_scope, subject_id);
+CREATE INDEX IF NOT EXISTS idx_relations_subject ON relations(subject_id);
+CREATE INDEX IF NOT EXISTS idx_relations_object ON relations(object_id);
+
+-- 关系抽取进度（避免重复总结同一批消息）
+CREATE TABLE IF NOT EXISTS extraction_state (
+    umo              TEXT PRIMARY KEY,
+    last_message_id  INTEGER NOT NULL DEFAULT 0,
+    updated_at       REAL NOT NULL DEFAULT 0
+);
 
 -- ============================================================
 -- 事件记忆（预留给后续版本：把发生的事总结成事件线）

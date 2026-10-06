@@ -25,6 +25,9 @@ from astrbot.api import logger
 # trigram 分词器要求查询串至少 3 个字符才能命中，短查询回退 LIKE。
 FTS_MIN_QUERY_CHARS = 3
 
+# 数据库结构版本：v0.4 起为 2（人物/关系表改为全局实体图）
+SCHEMA_VERSION = 2
+
 
 class MemoryDB:
     """记忆层数据库门面。"""
@@ -49,11 +52,46 @@ class MemoryDB:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("PRAGMA synchronous=NORMAL")
+        self._migrate(conn)
         schema = self.schema_path.read_text(encoding="utf-8")
         conn.executescript(schema)
+        conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         conn.commit()
         self._conn = conn
         logger.info(f"[ai_companion] 记忆数据库就绪: {self.db_path}")
+
+    @staticmethod
+    def _migrate(conn: sqlite3.Connection) -> None:
+        """结构升级。
+
+        v0.1~v0.3 的人物/关系表是占位骨架（从未写入过数据），v0.4 起改为
+        全局实体图结构。旧表若存在且为空，直接重建；有数据则保留不动。
+        """
+        version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+        if version >= SCHEMA_VERSION:
+            return
+
+        legacy = ("profiles", "entity_aliases", "relations")
+        for table in legacy:
+            exists = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                (table,),
+            ).fetchone()
+            if not exists:
+                continue
+            cols = {
+                r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()
+            }
+            # 旧结构带有 umo_scope 列；新结构没有
+            if "umo_scope" in cols:
+                count = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                if count == 0:
+                    conn.execute(f"DROP TABLE {table}")
+                else:
+                    logger.warning(
+                        f"[ai_companion] {table} 含旧结构数据，保留不迁移（{count} 行）"
+                    )
+        conn.commit()
 
     async def close(self) -> None:
         async with self._lock:
@@ -268,71 +306,293 @@ class MemoryDB:
         return f'"{escaped}"'
 
     # ------------------------------------------------------------------
-    # 人物画像（P4 完整启用，此处先提供基础读写）
+    # 实体（人）与别名
     # ------------------------------------------------------------------
-    async def upsert_profile_seen(
-        self,
-        *,
-        entity_id: str,
-        umo_scope: str,
-        display_name: str = "",
-        when: float | None = None,
-    ) -> None:
-        ts = time.time() if when is None else when
+    async def touch_entity(self, entity_id: str, display_name: str = "") -> None:
+        """记录一次「见到这个人」。"""
+        if not entity_id:
+            return
+        ts = time.time()
 
         def _op() -> None:
             self._execute(
-                "INSERT INTO profiles "
-                "(entity_id, umo_scope, display_name, first_seen, last_seen, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT(entity_id, umo_scope) DO UPDATE SET "
-                "display_name = CASE WHEN excluded.display_name != '' "
-                "THEN excluded.display_name ELSE profiles.display_name END, "
-                "last_seen = excluded.last_seen, updated_at = excluded.updated_at",
-                (entity_id, umo_scope, display_name, ts, ts, ts),
+                "INSERT INTO entities "
+                "(entity_id, last_name, first_seen, last_seen, interaction_count) "
+                "VALUES (?, ?, ?, ?, 1) "
+                "ON CONFLICT(entity_id) DO UPDATE SET "
+                "last_name = CASE WHEN excluded.last_name != '' "
+                "THEN excluded.last_name ELSE entities.last_name END, "
+                "last_seen = excluded.last_seen, "
+                "interaction_count = entities.interaction_count + 1",
+                (entity_id, display_name, ts, ts),
                 commit=True,
             )
 
         await self._run(_op)
 
-    async def get_profile(self, entity_id: str, umo_scope: str = "") -> dict | None:
-        def _op():
-            row = self._execute(
-                "SELECT * FROM profiles WHERE entity_id = ? AND umo_scope = ?",
-                (entity_id, umo_scope),
-                fetch="one",
-            )
-            return dict(row) if row else None
-
-        return await self._run(_op)
-
-    async def bind_alias(self, alias: str, entity_id: str, umo_scope: str = "") -> None:
+    async def bind_alias(self, alias: str, entity_id: str) -> None:
+        """把一个称呼绑定到实体，供归一使用。"""
         alias = (alias or "").strip()
-        if not alias:
+        if not alias or not entity_id:
             return
 
         def _op() -> None:
             self._execute(
-                "INSERT INTO entity_aliases (umo_scope, alias, entity_id, updated_at) "
-                "VALUES (?, ?, ?, ?) "
-                "ON CONFLICT(umo_scope, alias) DO UPDATE SET "
+                "INSERT INTO entity_aliases (alias, entity_id, updated_at) "
+                "VALUES (?, ?, ?) "
+                "ON CONFLICT(alias) DO UPDATE SET "
                 "entity_id = excluded.entity_id, updated_at = excluded.updated_at",
-                (umo_scope, alias, entity_id, time.time()),
+                (alias, entity_id, time.time()),
                 commit=True,
             )
 
         await self._run(_op)
 
-    async def resolve_alias(self, alias: str, umo_scope: str = "") -> str | None:
+    async def resolve_alias(self, alias: str) -> str | None:
+        """按称呼反查实体 ID。"""
+        alias = (alias or "").strip()
+        if not alias:
+            return None
+
         def _op():
             row = self._execute(
-                "SELECT entity_id FROM entity_aliases WHERE umo_scope = ? AND alias = ?",
-                (umo_scope, (alias or "").strip()),
+                "SELECT entity_id FROM entity_aliases WHERE alias = ?",
+                (alias,),
                 fetch="one",
             )
             return row["entity_id"] if row else None
 
         return await self._run(_op)
+
+    async def get_entity(self, entity_id: str) -> dict | None:
+        def _op():
+            row = self._execute(
+                "SELECT * FROM entities WHERE entity_id = ?", (entity_id,), fetch="one"
+            )
+            return dict(row) if row else None
+
+        return await self._run(_op)
+
+    # ------------------------------------------------------------------
+    # 人物画像
+    # ------------------------------------------------------------------
+    async def upsert_profile(
+        self,
+        entity_id: str,
+        *,
+        traits: list[str] | None = None,
+        style: str | None = None,
+        notes: str | None = None,
+        affinity: float | None = None,
+    ) -> None:
+        """写入/更新对某人的印象（仅覆盖显式传入的字段）。"""
+
+        def _op() -> None:
+            existing = self._execute(
+                "SELECT * FROM profiles WHERE entity_id = ?", (entity_id,), fetch="one"
+            )
+            if existing is None:
+                self._execute(
+                    "INSERT INTO profiles "
+                    "(entity_id, traits, style, notes, affinity, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        entity_id,
+                        json.dumps(traits or [], ensure_ascii=False),
+                        style or "",
+                        notes or "",
+                        float(affinity if affinity is not None else 0.0),
+                        time.time(),
+                    ),
+                    commit=True,
+                )
+                return
+
+            old_traits = self._load_json_list(existing["traits"])
+            merged_traits = old_traits
+            if traits:
+                merged_traits = list(dict.fromkeys([*old_traits, *traits]))[:20]
+
+            self._execute(
+                "UPDATE profiles SET traits = ?, style = ?, notes = ?, "
+                "affinity = ?, updated_at = ? WHERE entity_id = ?",
+                (
+                    json.dumps(merged_traits, ensure_ascii=False),
+                    style if style else existing["style"],
+                    notes if notes else existing["notes"],
+                    float(affinity)
+                    if affinity is not None
+                    else float(existing["affinity"]),
+                    time.time(),
+                    entity_id,
+                ),
+                commit=True,
+            )
+
+        await self._run(_op)
+
+    async def get_profile(self, entity_id: str) -> dict | None:
+        def _op():
+            row = self._execute(
+                "SELECT * FROM profiles WHERE entity_id = ?", (entity_id,), fetch="one"
+            )
+            if not row:
+                return None
+            data = dict(row)
+            data["traits"] = self._load_json_list(data.get("traits"))
+            return data
+
+        return await self._run(_op)
+
+    # ------------------------------------------------------------------
+    # 关系图谱
+    # ------------------------------------------------------------------
+    async def upsert_relation(
+        self,
+        subject_id: str,
+        predicate: str,
+        object_id: str,
+        *,
+        strength: float = 0.5,
+        evidence: str = "",
+    ) -> None:
+        """写入/强化一条关系。同一 (主语, 关系, 宾语) 只会存在一条，重复出现即强化。"""
+        if not (subject_id and predicate and object_id):
+            return
+        ts = time.time()
+
+        def _op() -> None:
+            existing = self._execute(
+                "SELECT * FROM relations WHERE subject_id = ? AND predicate = ? "
+                "AND object_id = ?",
+                (subject_id, predicate, object_id),
+                fetch="one",
+            )
+            if existing is None:
+                self._execute(
+                    "INSERT INTO relations "
+                    "(subject_id, predicate, object_id, strength, evidence, "
+                    " last_reinforced, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        subject_id,
+                        predicate,
+                        object_id,
+                        max(0.0, min(1.0, strength)),
+                        json.dumps([evidence] if evidence else [], ensure_ascii=False),
+                        ts,
+                        ts,
+                    ),
+                    commit=True,
+                )
+                return
+
+            # 再次观察到 -> 关系变强，并追加证据
+            new_strength = min(1.0, max(float(existing["strength"]), 0.0) + 0.15)
+            ev = self._load_json_list(existing["evidence"])
+            if evidence and evidence not in ev:
+                ev.append(evidence)
+            self._execute(
+                "UPDATE relations SET strength = ?, evidence = ?, last_reinforced = ? "
+                "WHERE id = ?",
+                (
+                    new_strength,
+                    json.dumps(ev[-10:], ensure_ascii=False),
+                    ts,
+                    existing["id"],
+                ),
+                commit=True,
+            )
+
+        await self._run(_op)
+
+    async def get_relations(
+        self, entity_id: str, *, limit: int = 20
+    ) -> list[dict]:
+        """取出与某人相关的全部关系（无论他/她是主语还是宾语）。"""
+
+        def _op():
+            rows = self._execute(
+                "SELECT * FROM relations WHERE subject_id = ? OR object_id = ? "
+                "ORDER BY strength DESC, last_reinforced DESC LIMIT ?",
+                (entity_id, entity_id, limit),
+                fetch="all",
+            )
+            out = []
+            for r in rows or []:
+                d = dict(r)
+                d["evidence"] = self._load_json_list(d.get("evidence"))
+                out.append(d)
+            return out
+
+        return await self._run(_op)
+
+    async def get_active_relations(self, *, limit: int = 200) -> list[dict]:
+        def _op():
+            rows = self._execute(
+                "SELECT * FROM relations ORDER BY strength DESC LIMIT ?",
+                (limit,),
+                fetch="all",
+            )
+            return [dict(r) for r in (rows or [])]
+
+        return await self._run(_op)
+
+    # ------------------------------------------------------------------
+    # 关系抽取进度
+    # ------------------------------------------------------------------
+    async def get_extraction_cursor(self, umo: str) -> int:
+        def _op():
+            row = self._execute(
+                "SELECT last_message_id FROM extraction_state WHERE umo = ?",
+                (umo,),
+                fetch="one",
+            )
+            return int(row["last_message_id"]) if row else 0
+
+        return await self._run(_op)
+
+    async def set_extraction_cursor(self, umo: str, last_message_id: int) -> None:
+        def _op() -> None:
+            self._execute(
+                "INSERT INTO extraction_state (umo, last_message_id, updated_at) "
+                "VALUES (?, ?, ?) "
+                "ON CONFLICT(umo) DO UPDATE SET "
+                "last_message_id = excluded.last_message_id, "
+                "updated_at = excluded.updated_at",
+                (umo, last_message_id, time.time()),
+                commit=True,
+            )
+
+        await self._run(_op)
+
+    async def messages_since(
+        self, umo: str, last_id: int, *, limit: int = 50
+    ) -> list[sqlite3.Row]:
+        """取出某会话在主键之后的消息（含 id，供推进游标）。"""
+
+        def _op():
+            rows = self._execute(
+                "SELECT * FROM messages WHERE umo = ? AND id > ? "
+                "ORDER BY id ASC LIMIT ?",
+                (umo, last_id, max(1, limit)),
+                fetch="all",
+            )
+            return list(rows or [])
+
+        return await self._run(_op)
+
+    @staticmethod
+    def _load_json_list(raw: Any) -> list:
+        if not raw:
+            return []
+        if isinstance(raw, list):
+            return raw
+        try:
+            data = json.loads(raw)
+            return data if isinstance(data, list) else []
+        except (json.JSONDecodeError, TypeError):
+            return []
 
     # ------------------------------------------------------------------
     # 统计

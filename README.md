@@ -24,7 +24,7 @@
 
 ---
 
-## 已实现（P0 + P1 + P2 + P3）
+## 已实现（P0 + P1 + P2 + P3 + P4）
 
 - **统一群聊 / 私聊**：一个入口处理所有会话，决策链内部区分场景。
 - **回复决策链**（可插拔，按成本从低到高短路）：
@@ -45,6 +45,11 @@
   命中的窗口才创建临时任务，关注 1000 个窗口也只跑一个循环。带**稳定抖动**（各会话
   不同时刻开口，更像真人节奏）；「未回复即闭嘴」——连续主动无人回应就进入冷却。
   生成时显式带入人格与近期上下文，发送走 `context.send_message`。
+- **人物画像与关系图谱（P4）**：像真人一样「对每个人都有印象，并知道这些人彼此
+  是什么关系」。后台**增量**总结聊天记录，沉淀出性格特点、说话风格与人际关系
+  （姐妹 / 恋人 / 同事…）。实体**全局唯一**（用平台用户 ID，同一个人在哪个群都是
+  他/她），支持昵称/群名片归一；关系双向可查、重复出现自动强化。回复时可摘要提示
+  「你对这个人的了解」，也有 `lookup_person` 工具供模型主动查询。
 - **全量消息落库**：即使 AI 决定不回复也会记录（真人也记得别人说过的话）。
 - **中文历史检索**：SQLite + FTS5 `trigram`；2 字符短词自动回退 `LIKE`。
 - **LLM 工具**：`search_chat_history`，模型需要时可自行翻聊天记录。
@@ -91,6 +96,12 @@ cp -r astrbot_plugin_ai_companion /path/to/AstrBot/data/plugins/
 | `proactive_cooldown_minutes` | 240 | 被无视后的冷却时长 |
 | `proactive_history_turns` | 10 | 主动消息参考的历史条数 |
 | `proactive_prompt` | "" | 主动消息提示词（支持三个占位符） |
+| `enable_knowledge_extraction` | true | 启用人物与关系抽取 |
+| `extraction_interval_minutes` | 30 | 增量抽取间隔 |
+| `extraction_min_messages` | 8 | 新消息不足该数则跳过 |
+| `extraction_batch_size` | 40 | 单批处理消息上限 |
+| `extraction_provider_id` | "" | 抽取专用模型（留空=默认模型） |
+| `inject_people_context` | true | 回复时提示相关人物 |
 | `system_prompt_extra` | "" | 额外系统提示词（建议精简） |
 | `inject_time` | true | 注入当前时间（临时块，不入历史） |
 | `debug_mode` | false | 输出每层决策结果 |
@@ -121,11 +132,13 @@ context/
   assembler.py             动态上下文块（临时、不污染历史）
 memory/
   compactor.py             短期记忆压缩（滚动摘要）
+  knowledge.py             人物画像与关系抽取（增量 + 全局实体）
 storage/
-  db.py                    SQLite 门面
-  schema.sql               表结构（messages/session_state/profiles/relations/events）
+  db.py                    SQLite 门面（含结构升级）
+  schema.sql               表结构（messages/session_state/entities/relations/…）
 tools/
   history_search.py        search_chat_history 工具
+  lookup_person.py         lookup_person 工具
 ```
 
 ### 数据流
@@ -159,9 +172,13 @@ sequenceDiagram
 | 表 | 用途 | 状态 |
 |----|------|------|
 | `messages` (+ `messages_fts`) | 原始消息 + 中文全文检索 | ✅ 已用 |
-| `profiles` / `entity_aliases` | 人物画像与别名归一 | 🧱 已建表，待接线 |
-| `relations` | 人与人的关系（姐妹/恋人…） | 🧱 已建表，待接线 |
-| `events` / `event_participants` | 事件记忆（超边） | 🧱 已建表，待接线 |
+| `session_state` | 会话运行态（主动消息跨重启恢复） | ✅ 已用 |
+| `entities` | 人（全局唯一实体） | ✅ 已用 |
+| `entity_aliases` | 称呼归一（昵称/群名片 → 实体） | ✅ 已用 |
+| `profiles` | 人物画像（特点 / 风格 / 备注 / 好感度） | ✅ 已用 |
+| `relations` | 关系图谱（姐妹 / 恋人 / 同事…，双向可查） | ✅ 已用 |
+| `extraction_state` | 抽取游标（增量，不重复烧 token） | ✅ 已用 |
+| `events` / `event_participants` | 事件记忆（事件线，P5） | 🧱 已建表 |
 
 ---
 
@@ -173,7 +190,7 @@ sequenceDiagram
 | P1 | LLM 读空气接入策略链 | ✅ 已完成 |
 | P2 | 短期记忆 compact（窗口不足时压缩沉淀） | ✅ 已完成 |
 | P3 | 主动消息（全局扫描 + 沉默触发 + 免打扰） | ✅ 已完成 |
-| P4 | 人物画像与关系图谱（`lookup_person` 工具） | 表已建 |
+| P4 | 人物画像与关系图谱（`lookup_person` 工具） | ✅ 已完成 |
 | P5 | 事件线抽取与关系派生 | 表已建 |
 | P6 | 拟人增强（打字延迟 / 错字 / 表情包 / 分段） | 规划中 |
 | P7 | 人格面板 / 好感度 / 专门决策模型插槽 | 插槽已预留 |

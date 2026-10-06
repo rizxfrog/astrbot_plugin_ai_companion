@@ -29,9 +29,9 @@ from .decision import (
     RateLimitDecider,
     RuleDecider,
 )
-from .memory import Compactor
+from .memory import Compactor, KnowledgeExtractor
 from .storage import MemoryDB
-from .tools import SearchHistoryTool
+from .tools import LookupPersonTool, SearchHistoryTool
 
 PLUGIN_NAME = "astrbot_plugin_ai_companion"
 
@@ -50,6 +50,9 @@ class AICompanionPlugin(Star):
         )
         self.orchestrator: Orchestrator | None = None
         self.scheduler: ProactiveScheduler | None = None
+        self.extractor: KnowledgeExtractor = KnowledgeExtractor(
+            db=self.db, context=self.context, config=self.config
+        )
 
     # ------------------------------------------------------------------
     # 生命周期
@@ -60,6 +63,9 @@ class AICompanionPlugin(Star):
             await self.db.connect()
         except Exception as e:
             logger.error(f"[ai_companion] 记忆数据库初始化失败: {e}", exc_info=True)
+
+        # 人物与关系抽取（长期记忆）
+        # （实例已在 __init__ 中创建，这里复用，避免工具注册与后台循环拿到不同实例）
 
         self.orchestrator = Orchestrator(
             config=self.config,
@@ -77,6 +83,7 @@ class AICompanionPlugin(Star):
                 context=self.context,
                 config=self.config,
             ),
+            extractor=self.extractor,
         )
 
         deciders: list = [
@@ -98,11 +105,20 @@ class AICompanionPlugin(Star):
             deciders.append(ProbabilityDecider())
         self.orchestrator.chain = DecisionChain(deciders)
 
-        # 注册历史检索工具（自建工具类，不依赖装饰器解析）
+        # 注册 LLM 工具（自建工具类，不依赖装饰器解析）
         try:
-            self.context.add_llm_tools(SearchHistoryTool(db=self.db))
+            self.context.add_llm_tools(
+                SearchHistoryTool(db=self.db),
+                LookupPersonTool(extractor=self.extractor),
+            )
         except Exception as e:
             logger.error(f"[ai_companion] 注册工具失败: {e}", exc_info=True)
+
+        # 人物与关系：后台增量抽取
+        try:
+            await self.extractor.start()
+        except Exception as e:
+            logger.error(f"[ai_companion] 启动知识抽取失败: {e}", exc_info=True)
 
         # 主动消息调度
         self.scheduler = ProactiveScheduler(
@@ -121,6 +137,11 @@ class AICompanionPlugin(Star):
 
     async def terminate(self) -> None:
         """插件卸载/重载时调用。"""
+        if self.extractor is not None:
+            try:
+                await self.extractor.stop()
+            except Exception as e:
+                logger.error(f"[ai_companion] 停止知识抽取失败: {e}", exc_info=True)
         if self.scheduler is not None:
             try:
                 await self.scheduler.stop()
@@ -157,8 +178,13 @@ class AICompanionPlugin(Star):
                 contexts=None,
                 conversation=result.conversation,
             )
-            if result.extra_parts:
-                request.extra_user_content_parts.extend(result.extra_parts)
+            extra = list(result.extra_parts) if result.extra_parts else []
+            if result.people_hint:
+                extra.extend(
+                    self.assembler.build_extra_parts(self.config, result.people_hint)
+                )
+            if extra:
+                request.extra_user_content_parts.extend(extra)
         except Exception as e:
             logger.error(f"[ai_companion] 构造 LLM 请求失败: {e}", exc_info=True)
             return

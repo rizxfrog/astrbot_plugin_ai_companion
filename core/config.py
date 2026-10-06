@@ -115,6 +115,25 @@ class CompanionConfig:
             self.raw.get("proactive_provider_id"), ""
         )
         self.proactive_prompt = _as_str(self.raw.get("proactive_prompt"), "")
+        # --- 人物与关系 ---
+        self.enable_knowledge_extraction = _as_bool(
+            self.raw.get("enable_knowledge_extraction"), True
+        )
+        self.extraction_provider_id = _as_str(
+            self.raw.get("extraction_provider_id"), ""
+        )
+        self.extraction_interval_minutes = max(
+            1, _as_int(self.raw.get("extraction_interval_minutes"), 30)
+        )
+        self.extraction_min_messages = max(
+            1, _as_int(self.raw.get("extraction_min_messages"), 8)
+        )
+        self.extraction_batch_size = max(
+            5, _as_int(self.raw.get("extraction_batch_size"), 40)
+        )
+        self.inject_people_context = _as_bool(
+            self.raw.get("inject_people_context"), True
+        )
         self.system_prompt_extra = _as_str(self.raw.get("system_prompt_extra"), "")
         self.inject_time = _as_bool(self.raw.get("inject_time"), True)
         self.debug_mode = _as_bool(self.raw.get("debug_mode"), False)

@@ -202,6 +202,49 @@
     "hint": "留空使用内置的简洁提示词。可用占位符：{{silence_minutes}} {{unanswered_count}} {{current_time}}。",
     "editor_mode": true
   },
+  "_knowledge_header": {
+    "description": "👥 人物与关系 (长期记忆)",
+    "type": "text",
+    "default": "",
+    "hint": "像真人一样：对每个人有一份印象，并知道这些人彼此是什么关系（姐妹、恋人、同事…）。插件会定期从聊天记录里增量总结，供 AI 在对话中参考。"
+  },
+  "enable_knowledge_extraction": {
+    "description": "启用人物与关系抽取",
+    "type": "bool",
+    "default": true,
+    "hint": "开启后，插件会定期把新消息交给模型总结出「谁是什么样的人、谁和谁是什么关系」，存入长期记忆。抽取是增量的，不会重复烧 token。"
+  },
+  "extraction_provider_id": {
+    "description": "抽取使用的模型",
+    "type": "string",
+    "default": "",
+    "hint": "留空则使用默认模型。这是总结任务，建议使用便宜快速的模型。",
+    "_special": "select_provider"
+  },
+  "extraction_interval_minutes": {
+    "description": "抽取间隔 (分钟)",
+    "type": "int",
+    "default": 30,
+    "hint": "每隔多久对所有会话做一轮增量抽取。"
+  },
+  "extraction_min_messages": {
+    "description": "最少新消息数",
+    "type": "int",
+    "default": 8,
+    "hint": "某会话累积的新消息少于该条数时不抽取，避免为几句话频繁调用模型。"
+  },
+  "extraction_batch_size": {
+    "description": "单批处理消息上限",
+    "type": "int",
+    "default": 40,
+    "hint": "一次最多总结多少条新消息，控制单次调用成本。"
+  },
+  "inject_people_context": {
+    "description": "在对话中提示相关人物",
+    "type": "bool",
+    "default": true,
+    "hint": "回复时若发言者已有画像或关系，把「对这个人/这些关系的了解」摘一句提示给 AI。内容很小，不会显著增加 token。"
+  },
   "debug_mode": {
     "description": "调试日志",
     "type": "bool",

@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -39,6 +40,7 @@ class TurnResult:
     prompt: str = ""
     conversation: Any = None
     extra_parts: list = field(default_factory=list)
+    people_hint: str = ""
 
 
 class Orchestrator:
@@ -55,6 +57,7 @@ class Orchestrator:
         conversation_manager: Any,
         context: Any = None,
         compactor: Any = None,
+        extractor: Any = None,
     ) -> None:
         self.config = config
         self.registry = registry
@@ -64,6 +67,8 @@ class Orchestrator:
         self.conversation_manager = conversation_manager
         self.context = context
         self.compactor = compactor
+        self.extractor = extractor
+        self._bg_tasks: set[Any] = set()
         self._seen: dict[str, float] = {}
 
     # ------------------------------------------------------------------
@@ -91,6 +96,10 @@ class Orchestrator:
                 umo=umo, event=event, sender_id=sender_id,
                 sender_name=sender_name, text=text,
             )
+
+        # 见到这个人就登记一下（画像内容由抽取器定期总结）
+        if sender_id:
+            self._spawn(self._remember_person(sender_id, sender_name))
 
         # 其他插件已经回复过：不再插手，也不拦截
         if getattr(event, "_has_send_oper", False):
@@ -135,6 +144,11 @@ class Orchestrator:
             prompt=prompt,
             conversation=conversation,
             extra_parts=self.assembler.build_extra_parts(cfg),
+            people_hint=(
+                await self._people_hint(sender_id)
+                if cfg.inject_people_context
+                else ""
+            ),
         )
 
     async def _maybe_compact(self, umo: str, conversation: Any) -> Any:
@@ -158,6 +172,51 @@ class Orchestrator:
             return refreshed or conversation
         except Exception:
             return conversation
+
+    def _spawn(self, coro: Any) -> None:
+        """派发一个后台协程，不阻塞消息处理。"""
+        try:
+            task = asyncio.create_task(coro)
+        except RuntimeError:
+            return
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
+
+    async def _remember_person(self, entity_id: str, display_name: str) -> None:
+        if self.extractor is None:
+            return
+        try:
+            await self.extractor.note_from_speaker(entity_id, display_name)
+        except Exception as e:
+            logger.debug(f"[ai_companion] 登记人物失败: {e}")
+
+    async def _people_hint(self, sender_id: str) -> str:
+        """摘一句「对当前发言者的了解」，用于本轮动态上下文。"""
+        if self.extractor is None or not sender_id:
+            return ""
+        try:
+            info = await self.extractor.describe_person(sender_id)
+        except Exception:
+            return ""
+        if not info.get("known"):
+            return ""
+
+        parts = []
+        profile = info.get("profile") or {}
+        traits = profile.get("traits") or []
+        if traits:
+            parts.append("、".join(str(t) for t in traits[:5]))
+        if profile.get("style"):
+            parts.append(str(profile["style"]))
+        rels = [
+            f"{r['relation']}{r['with']}" for r in (info.get("relations") or [])[:5]
+        ]
+        line = f"{info.get('name') or '此人'}"
+        if parts:
+            line += "：" + "；".join(parts)
+        if rels:
+            line += "（关系：" + "，".join(rels) + "）"
+        return line if (parts or rels) else ""
 
     # ------------------------------------------------------------------
     # 读空气实现
