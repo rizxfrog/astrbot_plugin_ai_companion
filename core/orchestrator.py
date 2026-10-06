@@ -44,6 +44,14 @@ class TurnResult:
     events_hint: str = ""
 
 
+@dataclass
+class _Burst:
+    """一次「连发」的累积状态。"""
+
+    token: object          # 最新一条消息的身份标记
+    lines: list[tuple[str, str, str]] = field(default_factory=list)
+
+
 class Orchestrator:
     """聊天主流程编排。"""
 
@@ -71,6 +79,104 @@ class Orchestrator:
         self.extractor = extractor
         self._bg_tasks: set[Any] = set()
         self._seen: dict[str, float] = {}
+        # 「连发合并」状态：umo -> 该会话正在累积的消息串
+        self._bursts: dict[str, _Burst] = {}
+
+    # ------------------------------------------------------------------
+    def _debounce_seconds(self, *, is_private: bool) -> float:
+        """按会话类型取等待时长。0 表示关闭合并（收到即决策）。"""
+        cfg = self.config
+        if not getattr(cfg, "enable_debounce", True):
+            return 0.0
+        raw = (
+            cfg.debounce_private_seconds
+            if is_private
+            else cfg.debounce_group_seconds
+        )
+        try:
+            return max(0.0, float(raw))
+        except (TypeError, ValueError):
+            return 0.0
+
+    async def _wait_quiet(
+        self,
+        umo: str,
+        line: "tuple[str, str, str]",
+        wait_seconds: float,
+    ) -> "tuple[list[tuple[str, str, str]], bool]":
+        """等这个会话安静下来，再返回累积的消息串。
+
+        语义是「用户停手若干秒后才决策」：收到消息起等 ``wait_seconds``，期间
+        又来一条就重新计时（滚动窗口），直到窗口内没有新消息为止。
+
+        滚动窗口不需要在这里手动延长：每来一条新消息都会重新进入本方法并从自己
+        的到达时刻起算，因此「最新那条消息等满窗口」自然等价于「用户停手了」。
+        谁是最新那条，由 ``token`` 判定 —— 被更新的消息取代时，旧的这一轮直接
+        放弃，把内容交给最新的那一轮，从而只回答一次。
+
+        Returns:
+            ``(本轮该处理的消息串, 是否继续处理)``。
+
+            消息串可能包含**当前这条之外**的更早消息 —— 它们原本会被平台作为
+            「运行中 Agent 的补充消息」注入，诱发重复回答；合并成一次请求即可根治。
+
+            第二项为 False 表示本轮已被后续消息合并，调用方应立即返回（并且
+            必须照常阻止平台默认链路，避免漏出未经决策的回复）。
+        """
+        cfg = self.config
+        token = object()
+        # 继承尚未结算的上一串：先到的那几轮会让出，内容由最新这轮统一处理
+        existing = self._bursts.get(umo)
+        lines: list[tuple[str, str, str]] = (
+            list(existing.lines) if existing is not None else []
+        )
+        lines.append(line)
+        self._bursts[umo] = _Burst(token=token, lines=lines)
+
+        deadline = time.monotonic() + wait_seconds
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            # 阻塞等待；等待期间新消息可并发进入（平台按会话并发派发事件）
+            await asyncio.sleep(min(remaining, 0.25))
+            burst = self._bursts.get(umo)
+            if burst is None or burst.token is not token:
+                if cfg.debug_mode:
+                    logger.info(f"[ai_companion] {umo} 本轮消息已被后续消息合并")
+                return [], False
+
+        # 结算前再确认一次归属：窗口到期与新消息到达可能恰好同时发生，
+        # 若此时已被顶替却仍返回消息串，就会和新的那一轮各自结算 -> 重复回答。
+        burst = self._bursts.get(umo)
+        if burst is None or burst.token is not token:
+            if cfg.debug_mode:
+                logger.info(f"[ai_companion] {umo} 本轮消息已被后续消息合并")
+            return [], False
+
+        self._bursts.pop(umo, None)
+        return lines, True
+
+    @staticmethod
+    def _merge_prompt(lines: list[tuple[str, str, str]]) -> str:
+        """把一组消息渲染成给模型的一条提示词。"""
+        if not lines:
+            return "[空消息]"
+        if len(lines) == 1:
+            name, sid, content = lines[0]
+            return format_for_model(
+                sender_name=name, sender_id=sid, content=content
+            ) or "[空消息]"
+        # 多条：逐行渲染，让模型明确「这是同一个人连发的几条」
+        rendered = []
+        for name, sid, content in lines:
+            rendered.append(
+                format_for_model(sender_name=name, sender_id=sid, content=content)
+            )
+        return (
+            "(对方刚才连着发了几条消息，请合并理解为一次发言、只回应一次)\n"
+            + "\n".join(rendered)
+        )
 
     # ------------------------------------------------------------------
     async def handle_message(self, event: Any) -> TurnResult:
@@ -106,14 +212,37 @@ class Orchestrator:
         if getattr(event, "_has_send_oper", False):
             return TurnResult(handled=True, should_reply=False, reason="已有其他发送行为")
 
+        # ---- 连发合并：等用户停手再决策 ----
+        # 用户常把一句话拆成几条发。每条都独立决策会导致模型一口气把几条都答了
+        # （表现为「同样的话回答两遍」）。这里等窗口内没有新消息后再统一决策。
+        # 指令消息不等待：用户敲 /help 就期望立刻有反应。
+        owner_event = event
+        is_command = self._is_command(event)
+        wait_seconds = (
+            0.0 if is_command else self._debounce_seconds(is_private=is_private)
+        )
+        if wait_seconds > 0:
+            lines, is_settler = await self._wait_quiet(
+                umo, (sender_name, sender_id, text), wait_seconds
+            )
+            if not is_settler:
+                # 已被后续消息合并：本轮不作决策，但**必须**阻止平台默认链路，
+                # 否则未被决策的消息会由平台自己的 Agent 直接回掉。
+                self._block_default_llm(event)
+                return TurnResult(
+                    handled=True, should_reply=False, reason="已合并到后续消息"
+                )
+            # 用整串消息作为本轮输入
+            text = self._merge_prompt(lines)
+
         ctx = TurnContext(
-            event=event,
+            event=owner_event,
             umo=umo,
             actor=actor,
             config=cfg,
             is_private=is_private,
-            is_mention=self._is_mention(event, is_private),
-            is_command=self._is_command(event),
+            is_mention=self._is_mention(owner_event, is_private),
+            is_command=is_command,
             message_text=text,
             sender_id=sender_id,
             sender_name=sender_name,
@@ -123,7 +252,7 @@ class Orchestrator:
         decision = await self.chain.decide(ctx)
 
         if not decision.should_reply:
-            self._block_default_llm(event)
+            self._block_default_llm(owner_event)
             if cfg.debug_mode:
                 logger.info(f"[ai_companion] {umo} 不回复（{decision.reason}）")
             return TurnResult(handled=True, should_reply=False, reason=decision.reason)
@@ -131,18 +260,15 @@ class Orchestrator:
         if cfg.debug_mode:
             logger.info(f"[ai_companion] {umo} 回复（{decision.reason}）")
 
-        event.set_extra(MANAGED_KEY, True)
+        owner_event.set_extra(MANAGED_KEY, True)
         conversation = await self._ensure_conversation(umo)
         conversation = await self._maybe_compact(umo, conversation)
-        prompt = format_for_model(
-            sender_name=sender_name, sender_id=sender_id, content=text,
-        ) or (text or "[空消息]")
 
         return TurnResult(
             handled=True,
             should_reply=True,
             reason=decision.reason,
-            prompt=prompt,
+            prompt=text,
             conversation=conversation,
             extra_parts=self.assembler.build_extra_parts(cfg),
             people_hint=(

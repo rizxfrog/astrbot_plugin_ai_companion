@@ -11,6 +11,7 @@ import asyncio
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -703,3 +704,172 @@ def test_dangling_image_placeholder_stripped_on_event_path():
     h.apply(ev2)
     leftovers = [c.text for c in ev2._r.chain if isinstance(c, Plain) and c.text.strip()]
     assert leftovers == [], f"应丢弃空段: {leftovers}"
+
+
+# ======================================================================
+# 连发合并（debounce）
+# ======================================================================
+def _bare_orchestrator(debounce_private=0.3, debounce_group=0.15):
+    """构造一个只测等待逻辑的最小 Orchestrator。"""
+    from astrbot_plugin_ai_companion.core import CompanionConfig
+    from astrbot_plugin_ai_companion.core.orchestrator import Orchestrator
+
+    cfg = CompanionConfig({
+        "enable_debounce": True,
+        "debounce_private_seconds": debounce_private,
+        "debounce_group_seconds": debounce_group,
+    })
+    return Orchestrator(
+        config=cfg, registry=None, chain=None, db=None,
+        assembler=None, conversation_manager=None,
+    )
+
+
+def test_debounce_waits_for_quiet_window():
+    """单条消息：等满窗口后才结算，返回自己这一条。"""
+
+    async def run():
+        o = _bare_orchestrator(debounce_private=0.25)
+        t0 = time.monotonic()
+        lines, ok = await o._wait_quiet(
+            "u:1", ("小明", "1", "在吗"), o._debounce_seconds(is_private=True)
+        )
+        elapsed = time.monotonic() - t0
+        return lines, ok, elapsed
+
+    lines, ok, elapsed = _run(run())
+    assert ok is True
+    assert elapsed >= 0.24, f"应等满窗口，实际 {elapsed:.3f}s"
+    assert len(lines) == 1 and lines[0][2] == "在吗"
+
+
+def test_debounce_merges_burst_into_one_turn():
+    """连发三条：只有最后一条结算，且带上前面两条的内容。"""
+
+    async def run():
+        o = _bare_orchestrator(debounce_private=0.2)
+
+        async def send(text, delay):
+            await asyncio.sleep(delay)
+            return await o._wait_quiet(
+                "u:1", ("小明", "1", text), o._debounce_seconds(is_private=True)
+            )
+
+        # 0.0 / 0.08 / 0.16 秒连发三下，窗口 0.2s
+        results = await asyncio.gather(
+            send("第一句", 0.0), send("第二句", 0.08), send("第三句", 0.16)
+        )
+        return results
+
+    results = _run(run())
+    settlers = [r for r in results if r[1]]
+    yielders = [r for r in results if not r[1]]
+    assert len(settlers) == 1, "只允许一条消息负责结算（否则会重复回答）"
+    assert len(yielders) == 2, "其余两条应让出"
+    lines, _ = settlers[0]
+    assert [l[2] for l in lines] == ["第一句", "第二句", "第三句"], \
+        f"应合并全部三条且保持顺序，实际 {[l[2] for l in lines]}"
+
+
+def test_debounce_separate_sessions_do_not_interfere():
+    """不同会话各自计时，互不影响。"""
+
+    async def run():
+        o = _bare_orchestrator(debounce_private=0.15)
+
+        async def send(umo, text):
+            return await o._wait_quiet(
+                umo, ("甲", "1", text), o._debounce_seconds(is_private=True)
+            )
+
+        return await asyncio.gather(send("a:1", "A"), send("b:1", "B"))
+
+    results = _run(run())
+    assert all(ok for _, ok in results), "两个会话都应独立结算"
+    assert [r[0][0][2] for r in results] == ["A", "B"]
+
+
+def test_debounce_disabled_returns_immediately():
+    """关闭合并时不应有任何等待。"""
+    from astrbot_plugin_ai_companion.core import CompanionConfig
+    from astrbot_plugin_ai_companion.core.orchestrator import Orchestrator
+
+    cfg = CompanionConfig({"enable_debounce": False, "debounce_private_seconds": 5})
+    o = Orchestrator(
+        config=cfg, registry=None, chain=None, db=None,
+        assembler=None, conversation_manager=None,
+    )
+    assert o._debounce_seconds(is_private=True) == 0.0
+    assert o._debounce_seconds(is_private=False) == 0.0
+
+
+def test_debounce_config_separates_group_and_private():
+    """群聊 3s / 私聊 5s 分别生效。"""
+    from astrbot_plugin_ai_companion.core import CompanionConfig
+    from astrbot_plugin_ai_companion.core.orchestrator import Orchestrator
+
+    cfg = CompanionConfig({
+        "debounce_group_seconds": 3,
+        "debounce_private_seconds": 5,
+    })
+    o = Orchestrator(
+        config=cfg, registry=None, chain=None, db=None,
+        assembler=None, conversation_manager=None,
+    )
+    assert o._debounce_seconds(is_private=True) == 5.0
+    assert o._debounce_seconds(is_private=False) == 3.0
+
+    # 默认值
+    d = CompanionConfig({})
+    od = Orchestrator(
+        config=d, registry=None, chain=None, db=None,
+        assembler=None, conversation_manager=None,
+    )
+    assert od._debounce_seconds(is_private=True) == 5.0
+    assert od._debounce_seconds(is_private=False) == 3.0
+
+
+def test_merge_prompt_marks_burst():
+    """多条消息渲染成一个提示词，并标注「只回一次」。"""
+    from astrbot_plugin_ai_companion.core.orchestrator import Orchestrator
+
+    one = Orchestrator._merge_prompt([("小明", "1", "你好")])
+    assert "你好" in one and one.count("\n") == 0
+
+    many = Orchestrator._merge_prompt(
+        [("小明", "1", "第一句"), ("小明", "1", "你是谁")]
+    )
+    assert "第一句" in many and "你是谁" in many
+    assert "只回应一次" in many
+
+
+def test_debounce_boundary_race_only_one_settles():
+    """窗口到期与新消息同时到达时，仍只允许一条结算（竞态回归）。
+
+    若结算前不二次确认归属，旧的一轮会在刚被顶替的瞬间返回消息串，
+    与新的那一轮各自结算，造成重复回答 —— 这正是本次要修的症状。
+    """
+    import random as _r
+
+    async def run():
+        o = _bare_orchestrator(debounce_private=0.1)
+        results = []
+
+        async def send(text, delay):
+            if delay:
+                await asyncio.sleep(delay)
+            r = await o._wait_quiet(
+                "u:1", ("小明", "1", text), o._debounce_seconds(is_private=True)
+            )
+            results.append((text, r[1], r[0]))
+
+        # 并发到达，且刻意让部分消息的到达时刻落在前一条窗口到期点上
+        await asyncio.gather(*[
+            send(f"msg@{d}", d) for d in (0.0, 0.05, 0.10, 0.15, 0.20)
+        ])
+        return results
+
+    res = _run(run())
+    settlers = [r for r in res if r[1]]
+    assert len(settlers) == 1, \
+        f"必须恰好一条结算，实际 {len(settlers)}: {[r[0] for r in settlers]}"

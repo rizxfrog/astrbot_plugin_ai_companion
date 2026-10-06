@@ -35,6 +35,30 @@
     "default": -1.0,
     "hint": "群聊里没被 @ 时，只有该概率的消息才会进入 AI 决策；其余由代码直接判定「不回复」。建议 0.05~0.2，模拟真人偶尔插话。设为 -1 表示沿用上面的「私聊 / 默认概率」。设为 0 表示群里未经点名一律不回复。注意：被 @ 或被引用时不受本项影响，始终回复。"
   },
+  "_debounce_header": {
+    "description": "⏳ 连发合并（等待用户停手）",
+    "type": "text",
+    "default": "",
+    "hint": "用户常把一句话拆成几条发。开启后先等一会儿，确认不再有新消息再统一决策，避免模型把每条都单独回答一遍（表现为重复回答）。"
+  },
+  "enable_debounce": {
+    "description": "启用连发合并",
+    "type": "bool",
+    "default": true,
+    "hint": "关闭后收到消息立即决策（旧行为），用户连发多条时可能出现重复回答。"
+  },
+  "debounce_private_seconds": {
+    "description": "私聊等待时长（秒）",
+    "type": "float",
+    "default": 5.0,
+    "hint": "收到消息后等这么久，期间若又来消息则重新计时，直到用户停手才决策。0 表示不等待。建议 3~8 秒。"
+  },
+  "debounce_group_seconds": {
+    "description": "群聊等待时长（秒）",
+    "type": "float",
+    "default": 3.0,
+    "hint": "同私聊，但群聊消息更密，等待可短一些。0 表示不等待。建议 2~5 秒。"
+  },
   "enable_llm_judge": {
     "description": "启用 AI 读空气",
     "type": "bool",

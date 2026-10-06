@@ -83,6 +83,14 @@ class CompanionConfig:
         self.min_reply_interval_seconds = max(
             0, _as_int(self.raw.get("min_reply_interval_seconds"), 3)
         )
+        # 连发合并：等到用户停手若干秒后再决策（0 = 关闭，收到即决策）
+        self.enable_debounce = _as_bool(self.raw.get("enable_debounce"), True)
+        self.debounce_group_seconds = max(
+            0.0, min(30.0, _as_float(self.raw.get("debounce_group_seconds"), 3.0))
+        )
+        self.debounce_private_seconds = max(
+            0.0, min(30.0, _as_float(self.raw.get("debounce_private_seconds"), 5.0))
+        )
         self.cooldown_after_unanswered = max(
             0, _as_int(self.raw.get("cooldown_after_unanswered"), 0)
         )
