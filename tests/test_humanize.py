@@ -270,3 +270,96 @@ def test_marker_stripping_helper():
     assert Humanizer.strip_sticker_markers("你好[sticker:开心]呀") == "你好呀"
     assert Humanizer.strip_sticker_markers("[表情]") == ""
     assert Humanizer.strip_sticker_markers("纯文本") == "纯文本"
+
+
+# ----------------------------------------------------------------------
+# 主动消息路径（没有事件对象，走 apply_to_text）
+# ----------------------------------------------------------------------
+def test_apply_to_text_replaces_marker_with_image(tmp_path):
+    """回归：主动消息不经过 on_decorating_result，必须能自己处理标记。"""
+    h = _humanizer(tmp_path, _cfg())
+    text, images = h.apply_to_text("好耶！[sticker:开心]")
+    assert text == "好耶！"
+    assert len(images) == 1
+    assert Path(images[0].path).parent.name == "开心"
+
+
+def test_apply_to_text_drops_dangling_placeholder(tmp_path):
+    """回归：模型常写 [图片] 却拿不到图片，不能把字面量发给用户。"""
+    h = _humanizer(tmp_path, _cfg(sticker_auto_probability=0.0))
+    text, images = h.apply_to_text("给你发个开心小表情包～ [图片]")
+    assert "[图片]" not in text
+    assert text.strip() == "给你发个开心小表情包～"
+    assert images == []
+
+
+def test_apply_to_text_keeps_placeholder_removed_variants(tmp_path):
+    h = _humanizer(tmp_path, _cfg(sticker_auto_probability=1.0), rng=FakeRng(0.0))
+    # 有图时不摘占位（因为确实附了图，由图片本身承载）
+    text, images = h.apply_to_text("看这个 [图片]")
+    assert len(images) == 1
+
+
+def test_apply_to_text_without_library_strips_markers(tmp_path):
+    from astrbot_plugin_ai_companion.humanize import Humanizer, StickerLibrary
+
+    h = Humanizer(
+        stickers=StickerLibrary(roots=[tmp_path / "none"]),
+        config=_cfg(), rng=FakeRng(),
+    )
+    text, images = h.apply_to_text("你好[sticker:开心]")
+    assert text == "你好"
+    assert images == []
+
+
+# ----------------------------------------------------------------------
+# 工具参数净化（回归：模型会构造平台不认识的段的类型）
+# ----------------------------------------------------------------------
+def _sanitize(messages):
+    """复现 main.on_using_llm_tool 的净化逻辑。"""
+    for item in messages:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("type", "")).lower() == "sticker":
+            item["type"] = "plain"
+            item["text"] = ""
+        for key in ("text", "content"):
+            v = item.get(key)
+            if isinstance(v, str) and v:
+                from astrbot_plugin_ai_companion.humanize.humanizer import (
+                    DANGLING_PLACEHOLDER_PATTERN,
+                    STICKER_PATTERN,
+                )
+
+                v = STICKER_PATTERN.sub("", v)
+                v = DANGLING_PLACEHOLDER_PATTERN.sub("", v).strip()
+                item[key] = v
+    out = [
+        m for m in messages
+        if not (isinstance(m, dict) and str(m.get("type", "plain")).lower() == "plain"
+                and not str(m.get("text", "")).strip())
+    ]
+    return out or [{"type": "plain", "text": "（表情）"}]
+
+
+def test_tool_args_unknown_sticker_segment_downgraded():
+    """模型写的 {'type':'sticker'} 必须降级为合法文本，否则平台会报错。"""
+    msgs = [
+        {"type": "plain", "text": "早安呀～"},
+        {"type": "sticker", "text": "开心"},
+    ]
+    out = _sanitize(msgs)
+    assert all(m["type"] == "plain" for m in out), out
+    assert len(out) == 1 and out[0]["text"] == "早安呀～"
+
+
+def test_tool_args_strips_sticker_marker_and_placeholder():
+    msgs = [{"type": "plain", "text": "开心哦 [sticker:开心] [图片]"}]
+    out = _sanitize(msgs)
+    assert out[0]["text"] == "开心哦"
+
+
+def test_tool_args_all_empty_becomes_placeholder():
+    msgs = [{"type": "plain", "text": "[sticker:开心]"}]
+    out = _sanitize(msgs)
+    assert out == [{"type": "plain", "text": "（表情）"}]

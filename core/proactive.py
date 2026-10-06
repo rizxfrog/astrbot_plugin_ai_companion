@@ -56,12 +56,14 @@ class ProactiveScheduler:
         db: Any,
         context: Any,
         conversation_manager: Any,
+        humanizer: Any = None,
     ) -> None:
         self.config = config
         self.registry = registry
         self.db = db
         self.context = context
         self.conversation_manager = conversation_manager
+        self.humanizer = humanizer
 
         self._task: asyncio.Task | None = None
         self._running = False
@@ -259,8 +261,31 @@ class ProactiveScheduler:
         )
 
     async def _send(self, umo: str, text: str) -> bool:
+        """发送主动消息。
+
+        主动消息不经过平台的 ``on_decorating_result``，所以表情标记与悬空占位符
+        必须在这里处理，否则会字面发给用户。
+        """
+        chain = MessageChain()
         try:
-            ok = await self.context.send_message(umo, MessageChain().message(text))
+            if self.humanizer is not None:
+                cleaned, images = self.humanizer.apply_to_text(text)
+                if cleaned:
+                    chain.message(cleaned)
+                for image in images:
+                    chain.chain.append(image)
+            else:
+                chain.message(text)
+        except Exception as e:
+            logger.error(f"[ai_companion] 主动消息拟人化失败: {e}", exc_info=True)
+            chain = MessageChain().message(text)
+
+        if not chain.chain:
+            # 文本被清理后为空、又没有图片：没有可发的内容
+            return False
+
+        try:
+            ok = await self.context.send_message(umo, chain)
             return bool(ok)
         except Exception as e:
             logger.error(f"[ai_companion] 主动消息发送异常: {e}", exc_info=True)

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import Any
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
@@ -36,9 +37,10 @@ from .decision import (
     RuleDecider,
 )
 from .humanize import Humanizer, StickerLibrary
+from .humanize.humanizer import DANGLING_PLACEHOLDER_PATTERN, STICKER_PATTERN
 from .memory import Compactor, KnowledgeExtractor
 from .storage import MemoryDB
-from .tools import LookupPersonTool, RecallEventsTool, SearchHistoryTool
+from .tools import LookupPersonTool, RecallEventsTool, SearchHistoryTool, SendStickerTool
 
 PLUGIN_NAME = "astrbot_plugin_ai_companion"
 
@@ -125,6 +127,7 @@ class AICompanionPlugin(Star):
                 SearchHistoryTool(db=self.db),
                 LookupPersonTool(extractor=self.extractor),
                 RecallEventsTool(extractor=self.extractor),
+                SendStickerTool(stickers=self.stickers, send_fn=self._send_image),
             )
         except Exception as e:
             logger.error(f"[ai_companion] 注册工具失败: {e}", exc_info=True)
@@ -142,6 +145,7 @@ class AICompanionPlugin(Star):
             db=self.db,
             context=self.context,
             conversation_manager=getattr(self.context, "conversation_manager", None),
+            humanizer=self.humanizer,
         )
         try:
             await self.scheduler.start()
@@ -240,8 +244,20 @@ class AICompanionPlugin(Star):
         if result.replaced:
             self._strip_markers_from_history(event)
 
+    async def _send_image(self, umo: str, image: Any) -> bool:
+        """工具用的图片发送通道：直接走 context.send_message。"""
+        try:
+            from astrbot.core.message.message_event_result import MessageChain
+
+            chain = MessageChain()
+            chain.chain.append(image)
+            return bool(await self.context.send_message(umo, chain))
+        except Exception as e:
+            logger.error(f"[ai_companion] 发送表情失败: {e}", exc_info=True)
+            return False
+
     def _inject_sticker_guidance(self, event: AstrMessageEvent, req) -> None:
-        """把可用表情分类告诉模型，并教它用标记发表情。"""
+        """引导模型用**工具**发表情，而不是构造未知的消息段。"""
         cfg = self.config
         if not cfg.enable_stickers or self.stickers.empty:
             return
@@ -253,16 +269,52 @@ class AICompanionPlugin(Star):
             categories = "、".join(self.stickers.categories()[:20])
             hint = (
                 "<表情包>\n"
-                f"可用的表情分类：{categories}\n"
-                "想发表情时，在回复里写 [sticker:分类名]（例如 [sticker:开心]），"
-                "系统会把它换成真实表情包。不要描述图片内容，也不要解释这个标记。\n"
+                f"可用分类：{categories}\n"
+                "想发表情时，直接调用 send_sticker 工具（可选填分类）。"
+                "不要在文字里写 [sticker:xx]、[图片] 之类的占位符，"
+                "也不要在回复里解释自己的工具调用过程。\n"
                 "</表情包>"
             )
-            req.extra_user_content_parts.append(
-                TextPart(text=hint).mark_as_temp()
-            )
+            req.extra_user_content_parts.append(TextPart(text=hint).mark_as_temp())
         except Exception:
             pass
+
+    @filter.on_using_llm_tool(priority=-1)
+    async def on_using_llm_tool(self, event: AstrMessageEvent, tool, tool_args) -> None:
+        """在工具调用前修正参数。
+
+        模型有时会自作主张构造平台不认识的消息段（如 ``{"type": "sticker"}``），
+        导致 ``unsupported message type`` 报错并把错误过程说给用户听。
+        这里在调用前把这类段转成合法文本，顺带清掉表情占位符。
+        """
+        if tool_args is None or not isinstance(tool_args, dict):
+            return
+        messages = tool_args.get("messages")
+        if not isinstance(messages, list):
+            return
+        for item in messages:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("type", "")).lower() == "sticker":
+                # 模型想发表情：不要让它变成非法消息段，交给 send_sticker 工具
+                item["type"] = "plain"
+                item["text"] = ""
+            for key in ("text", "content"):
+                value = item.get(key)
+                if isinstance(value, str) and value:
+                    cleaned = Humanizer.strip_sticker_markers(value)
+                    cleaned = STICKER_PATTERN.sub("", cleaned)
+                    cleaned = DANGLING_PLACEHOLDER_PATTERN.sub("", cleaned).strip()
+                    item[key] = cleaned
+        # 丢弃被清空的段
+        tool_args["messages"] = [
+            m for m in messages
+            if not (
+                isinstance(m, dict)
+                and str(m.get("type", "plain")).lower() == "plain"
+                and not str(m.get("text", "")).strip()
+            )
+        ] or [{"type": "plain", "text": "（表情）"}]
 
     def _strip_markers_from_history(self, event: AstrMessageEvent) -> None:
         """从事件结果里清掉表情标记（图片已就位，标记不应留在文本中）。"""

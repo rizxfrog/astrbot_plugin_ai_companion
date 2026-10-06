@@ -32,6 +32,12 @@ except ImportError:  # pragma: no cover
 # [sticker:开心] / [表情:开心] / [sticker]
 STICKER_PATTERN = re.compile(r"\[(?:sticker|表情)(?::([^\]]*))?\]", re.IGNORECASE)
 
+# 模型想发表情/图片但没能真正附上媒体时，会留下这种悬空占位符。
+# 直接发出去会让用户看到 "[图片]" 这种字面量，因此在没有实际图片时清掉。
+DANGLING_PLACEHOLDER_PATTERN = re.compile(
+    r"\[(?:图片|image|照片|photo)\]", re.IGNORECASE
+)
+
 
 @dataclass
 class HumanizeResult:
@@ -53,6 +59,47 @@ class Humanizer:
         self.stickers = stickers
         self.config = config
         self._rng = rng or random.Random()
+
+    # ------------------------------------------------------------------
+    def apply_to_text(self, text: str) -> tuple[str, list[Any]]:
+        """给**没有事件对象**的场景（如主动消息）处理文本。
+
+        主动消息直接走 ``context.send_message``，不经过 ``on_decorating_result``，
+        因此必须在这条路径上单独做表情处理，否则模型写的 ``[sticker:x]``
+        或残留的 ``[图片]`` 会字面发给用户。
+
+        Returns:
+            (清理后的文本, 要额外发送的图片组件列表)
+        """
+        cfg = self.config
+        images: list[Any] = []
+        if not text:
+            return text, images
+
+        if cfg.enable_stickers and not self.stickers.empty:
+            def _sub(match):
+                path = self.stickers.pick(match.group(1), rng=self._rng)
+                if path is not None and Image is not None:
+                    images.append(Image.fromFileSystem(path))
+                return ""
+
+            text = STICKER_PATTERN.sub(_sub, text)
+            if (
+                not images
+                and cfg.sticker_auto_probability > 0
+                and self._rng.random() < cfg.sticker_auto_probability
+            ):
+                path = self.stickers.pick(None, rng=self._rng)
+                if path is not None and Image is not None:
+                    images.append(Image.fromFileSystem(path))
+        else:
+            text = STICKER_PATTERN.sub("", text)
+
+        # 没有配图时，清掉模型留下的悬空媒体占位符
+        if not images:
+            text = DANGLING_PLACEHOLDER_PATTERN.sub("", text)
+
+        return text.strip(), images
 
     # ------------------------------------------------------------------
     def apply(self, event: Any) -> HumanizeResult:
