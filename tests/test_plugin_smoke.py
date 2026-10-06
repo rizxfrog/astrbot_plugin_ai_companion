@@ -200,8 +200,11 @@ def test_decision_chain_short_circuits():
     assert decision3.decider == "hard_filter"
 
 
-def test_llm_judge_decides_when_probability_defers():
-    """P1 接线：概率层弃权后，读空气负责最终拍板。"""
+def test_probability_gate_controls_model_calls():
+    """概率层的职责：决定**是否值得调用模型**。
+
+    命中门槛才交给读空气；未命中由代码直接判不回，一次模型调用都不花。
+    """
 
     from astrbot_plugin_ai_companion.core import CompanionConfig, SessionActor
     from astrbot_plugin_ai_companion.decision import (
@@ -212,7 +215,6 @@ def test_llm_judge_decides_when_probability_defers():
         RateLimitDecider,
         RuleDecider,
         TurnContext,
-        parse_judge_output,
     )
 
     class FakeEvent:
@@ -228,54 +230,97 @@ def test_llm_judge_decides_when_probability_defers():
             self.calls += 1
             return self.answer
 
-    def make_ctx():
+    def make_ctx(p):
         return TurnContext(
             event=FakeEvent(), umo="p:GroupMessage:1", actor=SessionActor(umo="x"),
-            config=CompanionConfig({"reply_probability": 0.0}),
+            config=CompanionConfig({"reply_probability": p}),
             is_private=False, is_mention=False, is_command=False,
             message_text="有人吗", sender_id="u1", sender_name="小明",
         )
 
-    # 读空气说「想接」-> 回复
+    # 命中门槛（roll=0 < 0.5）-> 交给读空气，由它说「想接」-> 回复
     judge_yes = FakeJudge({"reply": True, "reason": "被问到了"})
-    chain = DecisionChain([
+    d = _run(DecisionChain([
         HardFilterDecider(), RuleDecider(), RateLimitDecider(),
-        ProbabilityDecider(defer_on_fail=True), LLMJudgeDecider(judge_yes),
-    ])
-    d = _run(chain.decide(make_ctx()))
+        ProbabilityDecider(rng=_AlwaysZeroRng(), rate=lambda c: 0.5, defer_on_fail=True),
+        LLMJudgeDecider(judge_yes),
+    ]).decide(make_ctx(0.5)))
     assert d.should_reply is True and d.decider == "llm_judge", d
-    assert judge_yes.calls == 1, "概率弃权后读空气必须被调用"
+    assert judge_yes.calls == 1, "命中门槛后必须调用读空气"
 
     # 读空气说「不想接」-> 不回复
     judge_no = FakeJudge({"reply": False, "reason": "插不上话"})
-    chain_no = DecisionChain([
+    d2 = _run(DecisionChain([
         HardFilterDecider(), RuleDecider(), RateLimitDecider(),
-        ProbabilityDecider(defer_on_fail=True), LLMJudgeDecider(judge_no),
-    ])
-    d2 = _run(chain_no.decide(make_ctx()))
+        ProbabilityDecider(rng=_AlwaysZeroRng(), rate=lambda c: 0.5, defer_on_fail=True),
+        LLMJudgeDecider(judge_no),
+    ]).decide(make_ctx(0.5)))
     assert d2.should_reply is False and d2.decider == "llm_judge", d2
 
-    # 概率通过时不调用读空气（省钱）
-    judge_unused = FakeJudge({"reply": False})
-    chain_short = DecisionChain([
+    # 未命中门槛（roll=0.99 >= 0.5）-> 代码直接判不回，**不调用模型**
+    judge_unused = FakeJudge({"reply": True})
+    d3 = _run(DecisionChain([
         HardFilterDecider(), RuleDecider(), RateLimitDecider(),
-        ProbabilityDecider(rng=_AlwaysZeroRng(), defer_on_fail=True),
+        ProbabilityDecider(rng=_AlwaysHighRng(), rate=lambda c: 0.5, defer_on_fail=True),
         LLMJudgeDecider(judge_unused),
-    ])
-    d3 = _run(chain_short.decide(
-        TurnContext(
+    ]).decide(make_ctx(0.5)))
+    assert d3.decider == "probability" and d3.should_reply is False, d3
+    assert judge_unused.calls == 0, "未命中门槛不得调用模型（省钱的关键）"
+
+    # 概率为 0 -> 连门槛都不进，同样不调用模型
+    judge_zero = FakeJudge({"reply": True})
+    d4 = _run(DecisionChain([
+        HardFilterDecider(), RuleDecider(), RateLimitDecider(),
+        ProbabilityDecider(rng=_AlwaysZeroRng(), rate=lambda c: 0.0, defer_on_fail=True),
+        LLMJudgeDecider(judge_zero),
+    ]).decide(make_ctx(0.0)))
+    assert d4.should_reply is False and d4.decider == "probability", d4
+    assert judge_zero.calls == 0
+
+
+def test_group_probability_differs_from_default():
+    """群聊未 @ 时使用群聊概率；被 @ 与私聊不受影响。"""
+
+    from astrbot_plugin_ai_companion.core import CompanionConfig, SessionActor
+    from astrbot_plugin_ai_companion.decision import ProbabilityDecider, TurnContext
+
+    class FakeEvent:
+        def get_self_id(self):
+            return "bot1"
+
+    cfg = CompanionConfig({"reply_probability": 0.9, "group_reply_probability": 0.1})
+
+    def mk(is_private, is_mention):
+        return TurnContext(
             event=FakeEvent(), umo="p:GroupMessage:1", actor=SessionActor(umo="x"),
-            config=CompanionConfig({"reply_probability": 0.5}),
-            is_private=False, is_mention=False, is_command=False,
-            message_text="在吗", sender_id="u1", sender_name="小明",
+            config=cfg, is_private=is_private, is_mention=is_mention,
+            is_command=False, message_text="hi", sender_id="u1", sender_name="小明",
         )
-    ))
-    assert d3.decider == "probability" and judge_unused.calls == 0
+
+    def gate_rate(ctx):
+        if not ctx.is_private and not ctx.is_mention:
+            if cfg.group_reply_probability >= 0:
+                return cfg.group_reply_probability
+        return cfg.reply_probability
+
+    dec = ProbabilityDecider(rng=_AlwaysHighRng(), rate=gate_rate, defer_on_fail=True)
+
+    # 群聊未 @ -> 用 0.1，roll 0.99 未命中
+    d1 = _run(dec.decide(mk(is_private=False, is_mention=False)))
+    assert d1 is not None and d1.should_reply is False, "群聊未 @ 应使用较低概率"
+    # 群聊被 @ -> 用 0.9，roll 0.99 仍未命中（但若概率层弃权会由规则层先短路）
+    d2 = _run(dec.decide(mk(is_private=False, is_mention=True)))
+    assert d2 is not None and d2.should_reply is False
 
 
 class _AlwaysZeroRng:
     def random(self):
         return 0.0
+
+
+class _AlwaysHighRng:
+    def random(self):
+        return 0.99
 
 
 def test_parse_judge_output_tolerates_noise():

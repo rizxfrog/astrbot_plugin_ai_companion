@@ -65,6 +65,11 @@ class CompanionConfig:
         self.reply_probability = max(
             0.0, min(1.0, _as_float(self.raw.get("reply_probability"), 0.85))
         )
+        # -1 表示「沿用 reply_probability」
+        _group_p = _as_float(self.raw.get("group_reply_probability"), -1.0)
+        self.group_reply_probability = (
+            -1.0 if _group_p < 0 else max(0.0, min(1.0, _group_p))
+        )
         self.enable_llm_judge = _as_bool(self.raw.get("enable_llm_judge"), True)
         self.judge_provider_id = _as_str(self.raw.get("judge_provider_id"), "")
         self.judge_timeout_seconds = max(

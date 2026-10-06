@@ -107,18 +107,35 @@ class AICompanionPlugin(Star):
             RuleDecider(),
             RateLimitDecider(),
         ]
+
+        def _gate_rate(ctx) -> float:
+            """群聊未 @ 时用群聊概率；其余沿用默认概率。
+
+            概率在这里的含义是「**进入 AI 决策**的概率」：未命中就由代码直接
+            判定不回复，只有命中的少数消息才会真正调用模型。
+            """
+            cfg = self.config
+            if not ctx.is_private and not ctx.is_mention:
+                if cfg.group_reply_probability >= 0:
+                    return cfg.group_reply_probability
+            return cfg.reply_probability
+
         if self.config.enable_llm_judge:
-            # 概率层改为「未通过时弃权」，把最终拍板权交给读空气
-            deciders.append(ProbabilityDecider(defer_on_fail=True))
+            # 概率层作为「成本闸门」：未命中直接判不回，命中才交给读空气
+            deciders.append(ProbabilityDecider(rate=_gate_rate, defer_on_fail=True))
             deciders.append(
                 LLMJudgeDecider(
                     self.orchestrator._judge,
                     timeout=self.config.judge_timeout_seconds,
                 )
             )
-            logger.info("[ai_companion] 已启用 AI 读空气决策")
+            logger.info(
+                "[ai_companion] 已启用 AI 读空气决策"
+                f"（群聊决策概率 "
+                f"{self.config.group_reply_probability if self.config.group_reply_probability >= 0 else self.config.reply_probability}）"
+            )
         else:
-            deciders.append(ProbabilityDecider())
+            deciders.append(ProbabilityDecider(rate=_gate_rate))
         self.orchestrator.chain = DecisionChain(deciders)
 
         # 注册 LLM 工具（自建工具类，不依赖装饰器解析）
