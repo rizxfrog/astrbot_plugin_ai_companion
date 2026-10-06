@@ -731,13 +731,13 @@ def test_debounce_waits_for_quiet_window():
     async def run():
         o = _bare_orchestrator(debounce_private=0.25)
         t0 = time.monotonic()
-        lines, ok = await o._wait_quiet(
+        lines, ok, _imgs = await o._wait_quiet(
             "u:1", ("小明", "1", "在吗"), o._debounce_seconds(is_private=True)
         )
         elapsed = time.monotonic() - t0
-        return lines, ok, elapsed
+        return lines, ok, _imgs, elapsed
 
-    lines, ok, elapsed = _run(run())
+    lines, ok, _imgs, elapsed = _run(run())
     assert ok is True
     assert elapsed >= 0.24, f"应等满窗口，实际 {elapsed:.3f}s"
     assert len(lines) == 1 and lines[0][2] == "在吗"
@@ -766,7 +766,7 @@ def test_debounce_merges_burst_into_one_turn():
     yielders = [r for r in results if not r[1]]
     assert len(settlers) == 1, "只允许一条消息负责结算（否则会重复回答）"
     assert len(yielders) == 2, "其余两条应让出"
-    lines, _ = settlers[0]
+    lines, _ok, _imgs = settlers[0]
     assert [l[2] for l in lines] == ["第一句", "第二句", "第三句"], \
         f"应合并全部三条且保持顺序，实际 {[l[2] for l in lines]}"
 
@@ -785,7 +785,7 @@ def test_debounce_separate_sessions_do_not_interfere():
         return await asyncio.gather(send("a:1", "A"), send("b:1", "B"))
 
     results = _run(run())
-    assert all(ok for _, ok in results), "两个会话都应独立结算"
+    assert all(res[1] for res in results), "两个会话都应独立结算"
     assert [r[0][0][2] for r in results] == ["A", "B"]
 
 
@@ -1028,3 +1028,59 @@ def test_image_collection_survives_failure():
     finally:
         comps.Image = orig
     assert paths == ["/tmp/ok.png"], f"应跳过失败项保留成功项: {paths}"
+
+
+def test_burst_keeps_images_from_earlier_messages():
+    """「先发图、再发一句话」时，图片不能被丢掉（线上回归）。
+
+    私聊窗口 5 秒会把这两条合并成一轮；若只从**最后一条**事件取图片，
+    先到的图就丢了 —— 表现正是「我只显示个图片标记，具体啥样瞅不见」。
+    """
+    async def run():
+        o = _bare_orchestrator(debounce_private=0.2)
+
+        async def with_image():
+            return await o._wait_quiet(
+                "u:1", ("小明", "1", ""), 0.2, images=["/tmp/photo.png"]
+            )
+
+        async def text_only():
+            await asyncio.sleep(0.08)
+            return await o._wait_quiet(
+                "u:1", ("小明", "1", "这是什么表情包"), 0.2, images=[]
+            )
+
+        return await asyncio.gather(with_image(), text_only())
+
+    results = _run(run())
+    settlers = [r for r in results if r[1]]
+    assert len(settlers) == 1, "应只有一条结算"
+    lines, _ok, images = settlers[0]
+    assert images == ["/tmp/photo.png"], (
+        f"图片必须随合并保留，实际 {images}"
+    )
+    assert [l[2] for l in lines] == ["", "这是什么表情包"], "文本也都要在"
+
+
+def test_burst_merges_images_from_multiple_messages():
+    """多条消息各带图片时全部合并，且不重复。"""
+    async def run():
+        o = _bare_orchestrator(debounce_private=0.15)
+
+        async def send(imgs, delay):
+            await asyncio.sleep(delay)
+            return await o._wait_quiet(
+                "u:1", ("甲", "1", "看图"), 0.15, images=imgs
+            )
+
+        return await asyncio.gather(
+            send(["/a.png"], 0.0),
+            send(["/b.png"], 0.05),
+            send(["/a.png"], 0.09),   # 重复项
+        )
+
+    res = _run(run())
+    settlers = [r for r in res if r[1]]
+    assert len(settlers) == 1
+    _lines, _ok, images = settlers[0]
+    assert images == ["/a.png", "/b.png"], f"应去重合并，实际 {images}"

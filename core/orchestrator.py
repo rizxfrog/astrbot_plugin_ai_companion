@@ -51,6 +51,7 @@ class _Burst:
 
     token: object          # 最新一条消息的身份标记
     lines: list[tuple[str, str, str]] = field(default_factory=list)
+    images: list[str] = field(default_factory=list)
 
 
 class Orchestrator:
@@ -104,7 +105,9 @@ class Orchestrator:
         umo: str,
         line: "tuple[str, str, str]",
         wait_seconds: float,
-    ) -> "tuple[list[tuple[str, str, str]], bool]":
+        *,
+        images: "list[str] | None" = None,
+    ) -> "tuple[list[tuple[str, str, str]], bool, list[str]]":
         """等这个会话安静下来，再返回累积的消息串。
 
         语义是「用户停手若干秒后才决策」：收到消息起等 ``wait_seconds``，期间
@@ -126,13 +129,23 @@ class Orchestrator:
         """
         cfg = self.config
         token = object()
-        # 继承尚未结算的上一串：先到的那几轮会让出，内容由最新这轮统一处理
+        # 继承尚未结算的上一串：先到的那几轮会让出，内容由最新这轮统一处理。
+        # 图片同样要继承 —— 用户常常「先发图，再发一句话说明」，
+        # 若只取最后一条事件的图片，先到的图就被丢了。
         existing = self._bursts.get(umo)
         lines: list[tuple[str, str, str]] = (
             list(existing.lines) if existing is not None else []
         )
+        merged_images: list[str] = (
+            list(existing.images) if existing is not None else []
+        )
         lines.append(line)
-        self._bursts[umo] = _Burst(token=token, lines=lines)
+        for path in images or []:
+            if path not in merged_images:
+                merged_images.append(path)
+        self._bursts[umo] = _Burst(
+            token=token, lines=lines, images=merged_images
+        )
 
         deadline = time.monotonic() + wait_seconds
         while True:
@@ -145,7 +158,7 @@ class Orchestrator:
             if burst is None or burst.token is not token:
                 if cfg.debug_mode:
                     logger.info(f"[ai_companion] {umo} 本轮消息已被后续消息合并")
-                return [], False
+                return [], False, []
 
         # 结算前再确认一次归属：窗口到期与新消息到达可能恰好同时发生，
         # 若此时已被顶替却仍返回消息串，就会和新的那一轮各自结算 -> 重复回答。
@@ -153,10 +166,12 @@ class Orchestrator:
         if burst is None or burst.token is not token:
             if cfg.debug_mode:
                 logger.info(f"[ai_companion] {umo} 本轮消息已被后续消息合并")
-            return [], False
+            return [], False, []
 
+        # 以最新一轮登记的图片为准（它已把前面各轮合并进来）
+        final_images = list(burst.images)
         self._bursts.pop(umo, None)
-        return lines, True
+        return lines, True, final_images
 
     async def _collect_image_paths(self, event: Any) -> list[str]:
         """把当前消息里的图片落成可传给模型的路径。
@@ -258,9 +273,16 @@ class Orchestrator:
         wait_seconds = (
             0.0 if is_command else self._debounce_seconds(is_private=is_private)
         )
+        merged_images: list[str] = []
         if wait_seconds > 0:
-            lines, is_settler = await self._wait_quiet(
-                umo, (sender_name, sender_id, text), wait_seconds
+            # 先收集本条消息的图片，再进入等待：等待可能把这条合并掉，
+            # 那时它的 event 不再由本轮使用，图片必须先取出来。
+            own_images = await self._collect_image_paths(event)
+            lines, is_settler, burst_images = await self._wait_quiet(
+                umo,
+                (sender_name, sender_id, text),
+                wait_seconds,
+                images=own_images,
             )
             if not is_settler:
                 # 已被后续消息合并：本轮不作决策，但**必须**阻止平台默认链路，
@@ -271,6 +293,7 @@ class Orchestrator:
                 )
             # 用整串消息作为本轮输入
             text = self._merge_prompt(lines)
+            merged_images = burst_images
 
         ctx = TurnContext(
             event=owner_event,
@@ -300,7 +323,10 @@ class Orchestrator:
         owner_event.set_extra(MANAGED_KEY, True)
         conversation = await self._ensure_conversation(umo)
         conversation = await self._maybe_compact(umo, conversation)
-        image_urls = await self._collect_image_paths(owner_event)
+        # 未经过合并（debounce 关闭 / 指令消息）时，图片直接从本条事件取
+        if not merged_images:
+            merged_images = await self._collect_image_paths(owner_event)
+        image_urls = merged_images
 
         return TurnResult(
             handled=True,
