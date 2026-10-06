@@ -19,7 +19,7 @@ class RuleDecider(ReplyDecider):
             # 私聊等价于「一直和你说话」
             return reply("私聊消息", self.name)
 
-        if ctx.is_wake:
+        if ctx.is_mention:
             return reply("被 @ / 被引用 / 唤醒前缀", self.name)
 
         return None

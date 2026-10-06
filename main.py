@@ -24,6 +24,7 @@ from .core import CompanionConfig, Orchestrator, SessionRegistry
 from .decision import (
     DecisionChain,
     HardFilterDecider,
+    LLMJudgeDecider,
     ProbabilityDecider,
     RateLimitDecider,
     RuleDecider,
@@ -58,22 +59,34 @@ class AICompanionPlugin(Star):
         except Exception as e:
             logger.error(f"[ai_companion] 记忆数据库初始化失败: {e}", exc_info=True)
 
-        chain = DecisionChain(
-            [
-                HardFilterDecider(),
-                RuleDecider(),
-                RateLimitDecider(),
-                ProbabilityDecider(),
-            ]
-        )
         self.orchestrator = Orchestrator(
             config=self.config,
             registry=self.registry,
-            chain=chain,
+            chain=DecisionChain([HardFilterDecider()]),  # 占位，随后重建
             db=self.db,
             assembler=self.assembler,
             conversation_manager=getattr(self.context, "conversation_manager", None),
+            context=self.context,
         )
+
+        deciders: list = [
+            HardFilterDecider(),
+            RuleDecider(),
+            RateLimitDecider(),
+        ]
+        if self.config.enable_llm_judge:
+            # 概率层改为「未通过时弃权」，把最终拍板权交给读空气
+            deciders.append(ProbabilityDecider(defer_on_fail=True))
+            deciders.append(
+                LLMJudgeDecider(
+                    self.orchestrator._judge,
+                    timeout=self.config.judge_timeout_seconds,
+                )
+            )
+            logger.info("[ai_companion] 已启用 AI 读空气决策")
+        else:
+            deciders.append(ProbabilityDecider())
+        self.orchestrator.chain = DecisionChain(deciders)
 
         # 注册历史检索工具（自建工具类，不依赖装饰器解析）
         try:

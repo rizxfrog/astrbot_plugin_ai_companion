@@ -29,6 +29,25 @@
     "default": 0.85,
     "hint": "0~1。通过硬过滤、规则与限流后，按该概率决定是否回复。设为 1 表示总是回复。"
   },
+  "enable_llm_judge": {
+    "description": "启用 AI 读空气",
+    "type": "bool",
+    "default": true,
+    "hint": "开启后，群聊中未被点名的消息先按基础概率筛选；未通过时再交给一次轻量 AI 调用判断「此刻想不想接话」，由 AI 最终拍板。关闭则完全由概率决定。"
+  },
+  "judge_provider_id": {
+    "description": "读空气使用的模型",
+    "type": "string",
+    "default": "",
+    "hint": "留空则使用当前会话的默认模型。读空气是轻量判断，建议使用便宜快速的小模型以节省成本。",
+    "_special": "select_provider"
+  },
+  "judge_timeout_seconds": {
+    "description": "读空气超时 (秒)",
+    "type": "int",
+    "default": 15,
+    "hint": "超过该时长则放弃本次判断（保守不回复），避免卡住消息处理。"
+  },
   "ignore_command_messages": {
     "description": "忽略指令消息",
     "type": "bool",

@@ -53,6 +53,11 @@ class CompanionConfig:
         self.reply_probability = max(
             0.0, min(1.0, _as_float(self.raw.get("reply_probability"), 0.85))
         )
+        self.enable_llm_judge = _as_bool(self.raw.get("enable_llm_judge"), True)
+        self.judge_provider_id = _as_str(self.raw.get("judge_provider_id"), "")
+        self.judge_timeout_seconds = max(
+            1, _as_int(self.raw.get("judge_timeout_seconds"), 15)
+        )
         self.ignore_command_messages = _as_bool(
             self.raw.get("ignore_command_messages"), True
         )

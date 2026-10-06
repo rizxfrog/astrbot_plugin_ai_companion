@@ -169,7 +169,7 @@ def test_decision_chain_short_circuits():
 
     ctx = TurnContext(
         event=FakeEvent(), umo="p:GroupMessage:1", actor=SessionActor(umo="x"),
-        config=cfg, is_private=False, is_wake=True, is_command=False,
+        config=cfg, is_private=False, is_mention=True, is_command=False,
         message_text="你好", sender_id="u1", sender_name="小明",
     )
     chain = DecisionChain(
@@ -179,10 +179,10 @@ def test_decision_chain_short_circuits():
     assert decision.should_reply is True
     assert decision.decider == "rule", "被 @ 时应由规则层短路，不能被概率层否决"
 
-    # 未被唤醒的群消息：规则层弃权 -> 概率 0 否决
+    # 未被点名的群消息：规则层弃权 -> 概率 0 否决
     ctx2 = TurnContext(
         event=FakeEvent(), umo="p:GroupMessage:1", actor=SessionActor(umo="x"),
-        config=cfg, is_private=False, is_wake=False, is_command=False,
+        config=cfg, is_private=False, is_mention=False, is_command=False,
         message_text="随便说一句", sender_id="u1", sender_name="小明",
     )
     decision2 = _run(chain.decide(ctx2))
@@ -192,9 +192,115 @@ def test_decision_chain_short_circuits():
     # 空消息被硬过滤拦下
     ctx3 = TurnContext(
         event=FakeEvent(), umo="p:GroupMessage:1", actor=SessionActor(umo="x"),
-        config=cfg, is_private=False, is_wake=True, is_command=False,
+        config=cfg, is_private=False, is_mention=True, is_command=False,
         message_text="", sender_id="u1", sender_name="小明",
     )
     decision3 = _run(chain.decide(ctx3))
     assert decision3.should_reply is False
     assert decision3.decider == "hard_filter"
+
+
+def test_llm_judge_decides_when_probability_defers():
+    """P1 接线：概率层弃权后，读空气负责最终拍板。"""
+
+    from astrbot_plugin_ai_companion.core import CompanionConfig, SessionActor
+    from astrbot_plugin_ai_companion.decision import (
+        DecisionChain,
+        HardFilterDecider,
+        LLMJudgeDecider,
+        ProbabilityDecider,
+        RateLimitDecider,
+        RuleDecider,
+        TurnContext,
+        parse_judge_output,
+    )
+
+    class FakeEvent:
+        def get_self_id(self):
+            return "bot1"
+
+    class FakeJudge:
+        def __init__(self, answer):
+            self.answer = answer
+            self.calls = 0
+
+        async def __call__(self, ctx):
+            self.calls += 1
+            return self.answer
+
+    def make_ctx():
+        return TurnContext(
+            event=FakeEvent(), umo="p:GroupMessage:1", actor=SessionActor(umo="x"),
+            config=CompanionConfig({"reply_probability": 0.0}),
+            is_private=False, is_mention=False, is_command=False,
+            message_text="有人吗", sender_id="u1", sender_name="小明",
+        )
+
+    # 读空气说「想接」-> 回复
+    judge_yes = FakeJudge({"reply": True, "reason": "被问到了"})
+    chain = DecisionChain([
+        HardFilterDecider(), RuleDecider(), RateLimitDecider(),
+        ProbabilityDecider(defer_on_fail=True), LLMJudgeDecider(judge_yes),
+    ])
+    d = _run(chain.decide(make_ctx()))
+    assert d.should_reply is True and d.decider == "llm_judge", d
+    assert judge_yes.calls == 1, "概率弃权后读空气必须被调用"
+
+    # 读空气说「不想接」-> 不回复
+    judge_no = FakeJudge({"reply": False, "reason": "插不上话"})
+    chain_no = DecisionChain([
+        HardFilterDecider(), RuleDecider(), RateLimitDecider(),
+        ProbabilityDecider(defer_on_fail=True), LLMJudgeDecider(judge_no),
+    ])
+    d2 = _run(chain_no.decide(make_ctx()))
+    assert d2.should_reply is False and d2.decider == "llm_judge", d2
+
+    # 概率通过时不调用读空气（省钱）
+    judge_unused = FakeJudge({"reply": False})
+    chain_short = DecisionChain([
+        HardFilterDecider(), RuleDecider(), RateLimitDecider(),
+        ProbabilityDecider(rng=_AlwaysZeroRng(), defer_on_fail=True),
+        LLMJudgeDecider(judge_unused),
+    ])
+    d3 = _run(chain_short.decide(
+        TurnContext(
+            event=FakeEvent(), umo="p:GroupMessage:1", actor=SessionActor(umo="x"),
+            config=CompanionConfig({"reply_probability": 0.5}),
+            is_private=False, is_mention=False, is_command=False,
+            message_text="在吗", sender_id="u1", sender_name="小明",
+        )
+    ))
+    assert d3.decider == "probability" and judge_unused.calls == 0
+
+
+class _AlwaysZeroRng:
+    def random(self):
+        return 0.0
+
+
+def test_parse_judge_output_tolerates_noise():
+    from astrbot_plugin_ai_companion.decision import parse_judge_output
+
+    assert parse_judge_output('{"reply": true, "reason": "x"}')["reply"] is True
+    assert parse_judge_output('```json\n{"reply": false}\n```')["reply"] is False
+    assert parse_judge_output('好的，我的判断是 {"reply": true} 以上')["reply"] is True
+    assert parse_judge_output("完全不是 JSON") is None
+    assert parse_judge_output("") is None
+
+
+def test_is_mention_prefers_at_or_wake_command():
+    """回归：is_wake 会被本插件自身 filter 置真，必须用 is_at_or_wake_command。"""
+
+    from astrbot_plugin_ai_companion.core.orchestrator import Orchestrator
+
+    class Ev:
+        is_wake = True  # 本插件 handler filter 通过会置真
+        is_at_or_wake_command = False  # 没被 @
+
+    class Ev2:
+        is_wake = True
+        is_at_or_wake_command = True
+
+    assert Orchestrator._is_mention(Ev(), is_private=False) is False
+    assert Orchestrator._is_mention(Ev2(), is_private=False) is True
+    assert Orchestrator._is_mention(Ev(), is_private=True) is True

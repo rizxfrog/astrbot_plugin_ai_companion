@@ -21,11 +21,20 @@ class TurnContext:
     actor: Any  # SessionActor（避免循环导入，运行期鸭子类型）
     config: Any  # CompanionConfig
     is_private: bool
-    is_wake: bool
+    is_mention: bool
+    """是否真的被叫到（被 @ / 被引用 / 唤醒前缀 / 私聊）。
+
+    注意：不能用 ``event.is_wake`` —— 本插件自己的 handler filter 通过也会把
+    ``is_wake`` 置为 True，因此它对本插件恒为真。正确信号是
+    ``event.is_at_or_wake_command``，它在唤醒阶段仅对被 @ / 被引用 / 唤醒前缀
+    才被置位，插件 handler 通过时不会被设置。
+    """
     is_command: bool
     message_text: str
     sender_id: str
     sender_name: str
+    self_id: str = ""
+    recent_lines: list[str] = field(default_factory=list)
     now: float = field(default_factory=time.time)
 
     def log(self, message: str) -> None:

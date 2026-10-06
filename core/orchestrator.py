@@ -23,6 +23,7 @@ from astrbot.api import logger
 
 from ..context import format_for_model, render_chain
 from ..decision import DecisionChain, TurnContext
+from ..decision.llm_judge import JUDGE_SYSTEM_PROMPT, parse_judge_output
 
 MANAGED_KEY = "_ai_companion_managed"
 RECORDED_KEY = "_ai_companion_recorded"
@@ -52,6 +53,7 @@ class Orchestrator:
         db: Any,
         assembler: Any,
         conversation_manager: Any,
+        context: Any = None,
     ) -> None:
         self.config = config
         self.registry = registry
@@ -59,6 +61,7 @@ class Orchestrator:
         self.db = db
         self.assembler = assembler
         self.conversation_manager = conversation_manager
+        self.context = context
         self._seen: dict[str, float] = {}
 
     # ------------------------------------------------------------------
@@ -97,11 +100,13 @@ class Orchestrator:
             actor=actor,
             config=cfg,
             is_private=is_private,
-            is_wake=bool(getattr(event, "is_wake", False)),
+            is_mention=self._is_mention(event, is_private),
             is_command=self._is_command(event),
             message_text=text,
             sender_id=sender_id,
             sender_name=sender_name,
+            self_id=self_id,
+            recent_lines=await self._recent_lines(umo),
         )
         decision = await self.chain.decide(ctx)
 
@@ -128,6 +133,80 @@ class Orchestrator:
             conversation=conversation,
             extra_parts=self.assembler.build_extra_parts(cfg),
         )
+
+    # ------------------------------------------------------------------
+    # 读空气实现
+    # ------------------------------------------------------------------
+    async def _judge(self, ctx: TurnContext) -> dict | None:
+        """一次轻量 LLM 调用，判断「此刻想不想接这句话」。
+
+        刻意不走平台 Agent 链路：没有工具、没有人格、上下文极小，
+        因此又快又便宜，也不会污染主对话历史。
+        """
+        provider = await self._resolve_judge_provider(ctx.umo)
+        if provider is None:
+            if ctx.config.debug_mode:
+                logger.info("[ai_companion] 未找到可用模型，读空气弃权")
+            return None
+
+        recent = "\n".join(ctx.recent_lines) if ctx.recent_lines else "（暂无）"
+        user_prompt = (
+            f"最近的消息：\n{recent}\n\n"
+            f"即将判断的这条：{ctx.sender_name or '某人'}: {ctx.message_text}"
+        )
+
+        if ctx.config.debug_mode:
+            logger.info(f"[ai_companion] 读空气请求:\n{user_prompt[:400]}")
+
+        resp = await provider.text_chat(
+            prompt=user_prompt,
+            system_prompt=JUDGE_SYSTEM_PROMPT,
+            contexts=[],
+        )
+        raw = getattr(resp, "completion_text", "") or ""
+        parsed = parse_judge_output(raw)
+
+        if ctx.config.debug_mode:
+            logger.info(f"[ai_companion] 读空气原始输出: {raw[:200]!r}")
+            logger.info(f"[ai_companion] 读空气解析结果: {parsed}")
+        return parsed
+
+    async def _resolve_judge_provider(self, umo: str) -> Any:
+        """解析读空气使用的 Provider：优先配置指定，否则用会话默认。"""
+        context = self.context
+        if context is None:
+            return None
+        try:
+            pid = (self.config.judge_provider_id or "").strip()
+            if pid:
+                prov = context.get_provider_by_id(pid)
+                if prov is not None:
+                    return prov
+                logger.warning(
+                    f"[ai_companion] 配置的读空气模型 {pid} 不存在，回退默认模型"
+                )
+            return await context.get_using_provider_async(umo)
+        except Exception as e:
+            logger.error(f"[ai_companion] 解析读空气模型失败: {e}", exc_info=True)
+            return None
+
+    async def _recent_lines(self, umo: str, limit: int = 10) -> list[str]:
+        """取本会话最近的可读消息，供读空气判断氛围。"""
+        try:
+            rows = await self.db.recent_messages(umo, limit=limit)
+        except Exception:
+            return []
+        lines: list[str] = []
+        for row in rows:
+            content = (row["content"] or "").strip()
+            if not content:
+                continue
+            if row["role"] == "assistant":
+                lines.append(f"我: {content}")
+            else:
+                name = row["sender_name"] or "某人"
+                lines.append(f"{name}: {content}")
+        return lines
 
     # ------------------------------------------------------------------
     async def handle_after_sent(self, event: Any) -> None:
@@ -201,6 +280,18 @@ class Orchestrator:
             return True
         self._seen[mid] = now
         return False
+
+    @staticmethod
+    def _is_mention(event: Any, is_private: bool) -> bool:
+        """是否真的被叫到（被 @ / 被引用 / 唤醒前缀 / 私聊）。
+
+        只能信任 ``is_at_or_wake_command``：它在唤醒阶段仅对「被 @ / 被引用 /
+        唤醒前缀」置位；而 ``is_wake`` 会被本插件自身 handler 的 filter 通过置位，
+        对本插件恒为真，不能作为判断依据。
+        """
+        if is_private:
+            return True
+        return bool(getattr(event, "is_at_or_wake_command", False))
 
     @staticmethod
     def _is_command(event: Any) -> bool:

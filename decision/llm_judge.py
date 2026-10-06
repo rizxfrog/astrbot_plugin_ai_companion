@@ -1,11 +1,16 @@
-"""LLM 读空气决策器（P1 启用；P0 默认不加入策略链）。
+"""LLM 读空气决策器。
 
 与其他决策器的关键区别：它需要一次独立的、**不进入平台 Agent 链路**的 LLM 调用，
-因此必须由编排层显式注入 ``judge`` 回调，避免决策层反向依赖平台上下文。
+因此由编排层注入 ``judge`` 回调（``Orchestrator._judge``），避免决策层反向依赖
+平台上下文。
+
+它在策略链中的位置：概率层**之后**。当概率层弃权（defer）时，读空气负责最终
+拍板；调用失败时同样弃权，由链尾默认保守否决。
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Awaitable, Callable
 
@@ -23,7 +28,7 @@ JUDGE_SYSTEM_PROMPT = """你是群聊中的普通成员，不是助手，也不�
 倾向不接：闲聊与你无关/别人已经在回/你插不上话/单纯刷屏。
 
 只输出 JSON，不要多余文字：
-{"reply": true 或 false, "reason": "一句话理由","mood": "此刻心情词"}"""
+{"reply": true 或 false, "reason": "一句话理由", "mood": "此刻心情词"}"""
 
 
 class LLMJudgeDecider(ReplyDecider):
@@ -37,7 +42,10 @@ class LLMJudgeDecider(ReplyDecider):
 
     async def decide(self, ctx: TurnContext) -> Decision | None:
         try:
-            result = await self._judge(ctx)
+            result = await asyncio.wait_for(self._judge(ctx), timeout=self._timeout)
+        except asyncio.TimeoutError:
+            logger.warning(f"[ai_companion] 读空气超时（>{self._timeout}s），弃权")
+            return None
         except Exception as e:
             logger.error(f"[ai_companion] 读空气调用失败: {e}", exc_info=True)
             return None  # 弃权，交由链上后续决策器

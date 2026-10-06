@@ -24,14 +24,18 @@
 
 ---
 
-## 已实现（P0）
+## 已实现（P0 + P1）
 
 - **统一群聊 / 私聊**：一个入口处理所有会话，决策链内部区分场景。
 - **回复决策链**（可插拔，按成本从低到高短路）：
   1. `HardFilterDecider` — 空消息 / 指令 / Bot 自身消息 / 未启用会话
   2. `RuleDecider` — 私聊、被 @、被引用、唤醒前缀 → 直接回复
   3. `RateLimitDecider` — 最小回复间隔、冷却
-  4. `ProbabilityDecider` — 基础概率（未来替换为专门决策模型处）
+  4. `ProbabilityDecider` — 基础概率（启用读空气时：未通过则**弃权**）
+  5. `LLMJudgeDecider` — **AI 读空气**，由一次轻量 LLM 调用最终拍板
+- **AI 读空气（P1）**：群聊里没被点名的消息，先按概率粗筛，未通过时再让 AI
+  判断「此刻想不想接话」。读空气调用**不进平台 Agent 链路**：无工具、无人格、
+  上下文极小，又快又便宜，也不污染主对话历史。支持独立指定便宜模型与超时。
 - **每会话运行态注册表**：同时关注 N 个窗口，内存开销 ~1KB/会话，
   **不 per-window 常驻 Agent**；同会话串行（锁），跨会话并行。
 - **全量消息落库**：即使 AI 决定不回复也会记录（真人也记得别人说过的话）。
@@ -61,6 +65,9 @@ cp -r astrbot_plugin_ai_companion /path/to/AstrBot/data/plugins/
 | `enable_private_chat` | true | 私聊 |
 | `enable_group_chat` | true | 群聊 |
 | `reply_probability` | 0.85 | 基础回复概率（0~1） |
+| `enable_llm_judge` | true | 启用 AI 读空气（概率未通过时由 AI 拍板） |
+| `judge_provider_id` | "" | 读空气专用模型（留空=默认模型） |
+| `judge_timeout_seconds` | 15 | 读空气超时，超时保守不回复 |
 | `ignore_command_messages` | true | 指令消息交给平台指令链路 |
 | `min_reply_interval_seconds` | 3 | 同会话最小回复间隔 |
 | `record_all_messages` | true | 记录全部消息 |
@@ -140,7 +147,7 @@ sequenceDiagram
 | 期 | 内容 | 状态 |
 |----|------|------|
 | P0 | 决策链 / 注册表 / 落库 / 检索工具 | ✅ 已完成 |
-| P1 | LLM 读空气接入策略链 | 代码就绪（`llm_judge.py`），待接线 |
+| P1 | LLM 读空气接入策略链 | ✅ 已完成 |
 | P2 | 短期记忆 compact（窗口不足时压缩沉淀） | 规划中 |
 | P3 | 主动消息（全局扫描 + 沉默触发 + 免打扰） | 规划中 |
 | P4 | 人物画像与关系图谱（`lookup_person` 工具） | 表已建 |
