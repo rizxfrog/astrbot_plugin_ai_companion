@@ -25,7 +25,9 @@ class ContextAssembler:
     def __init__(self, db: Any = None) -> None:
         self._db = db
 
-    def build_extra_parts(self, cfg: Any, people_hint: str = "") -> list[Any]:
+    def build_extra_parts(
+        self, cfg: Any, people_hint: str = "", events_hint: str = ""
+    ) -> list[Any]:
         """返回需要追加到本轮请求的临时内容块。"""
         parts: list[Any] = []
         if cfg.inject_time and TextPart is not None:
@@ -35,6 +37,11 @@ class ContextAssembler:
         if people_hint and TextPart is not None:
             part = TextPart(
                 text=f"<你对这个人的了解>{people_hint}</你对这个人的了解>"
+            ).mark_as_temp()
+            parts.append(part)
+        if events_hint and TextPart is not None:
+            part = TextPart(
+                text=f"<最近发生的事>{events_hint}</最近发生的事>"
             ).mark_as_temp()
             parts.append(part)
         return parts

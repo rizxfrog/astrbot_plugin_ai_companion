@@ -24,7 +24,7 @@
 
 ---
 
-## 已实现（P0 + P1 + P2 + P3 + P4）
+## 已实现（P0 – P5）
 
 - **统一群聊 / 私聊**：一个入口处理所有会话，决策链内部区分场景。
 - **回复决策链**（可插拔，按成本从低到高短路）：
@@ -50,6 +50,9 @@
   （姐妹 / 恋人 / 同事…）。实体**全局唯一**（用平台用户 ID，同一个人在哪个群都是
   他/她），支持昵称/群名片归一；关系双向可查、重复出现自动强化。回复时可摘要提示
   「你对这个人的了解」，也有 `lookup_person` 工具供模型主动查询。
+- **事件线（P5）**：像真人一样记得「我们之前约好过什么」。在与人物抽取同一次调用里
+  顺带总结关键事件（约定 / 计划 / 经历 / 变化 / 冲突），入库并关联参与者；相似事件
+  自动去重。回复时摘一句「最近发生的事」，也有 `recall_events` 工具按关键词回忆。
 - **全量消息落库**：即使 AI 决定不回复也会记录（真人也记得别人说过的话）。
 - **中文历史检索**：SQLite + FTS5 `trigram`；2 字符短词自动回退 `LIKE`。
 - **LLM 工具**：`search_chat_history`，模型需要时可自行翻聊天记录。
@@ -102,6 +105,7 @@ cp -r astrbot_plugin_ai_companion /path/to/AstrBot/data/plugins/
 | `extraction_batch_size` | 40 | 单批处理消息上限 |
 | `extraction_provider_id` | "" | 抽取专用模型（留空=默认模型） |
 | `inject_people_context` | true | 回复时提示相关人物 |
+| `inject_events_context` | true | 回复时提示最近发生的事 |
 | `system_prompt_extra` | "" | 额外系统提示词（建议精简） |
 | `inject_time` | true | 注入当前时间（临时块，不入历史） |
 | `debug_mode` | false | 输出每层决策结果 |
@@ -132,13 +136,14 @@ context/
   assembler.py             动态上下文块（临时、不污染历史）
 memory/
   compactor.py             短期记忆压缩（滚动摘要）
-  knowledge.py             人物画像与关系抽取（增量 + 全局实体）
+  knowledge.py             人物画像 / 关系图谱 / 事件线抽取（增量 + 全局实体）
 storage/
   db.py                    SQLite 门面（含结构升级）
   schema.sql               表结构（messages/session_state/entities/relations/…）
 tools/
   history_search.py        search_chat_history 工具
   lookup_person.py         lookup_person 工具
+  recall_events.py         recall_events 工具
 ```
 
 ### 数据流
@@ -178,7 +183,7 @@ sequenceDiagram
 | `profiles` | 人物画像（特点 / 风格 / 备注 / 好感度） | ✅ 已用 |
 | `relations` | 关系图谱（姐妹 / 恋人 / 同事…，双向可查） | ✅ 已用 |
 | `extraction_state` | 抽取游标（增量，不重复烧 token） | ✅ 已用 |
-| `events` / `event_participants` | 事件记忆（事件线，P5） | 🧱 已建表 |
+| `events` / `event_participants` | 事件线（约定 / 计划 / 变化…） | ✅ 已用 |
 
 ---
 
@@ -191,7 +196,7 @@ sequenceDiagram
 | P2 | 短期记忆 compact（窗口不足时压缩沉淀） | ✅ 已完成 |
 | P3 | 主动消息（全局扫描 + 沉默触发 + 免打扰） | ✅ 已完成 |
 | P4 | 人物画像与关系图谱（`lookup_person` 工具） | ✅ 已完成 |
-| P5 | 事件线抽取与关系派生 | 表已建 |
+| P5 | 事件线抽取与关系派生 | ✅ 已完成 |
 | P6 | 拟人增强（打字延迟 / 错字 / 表情包 / 分段） | 规划中 |
 | P7 | 人格面板 / 好感度 / 专门决策模型插槽 | 插槽已预留 |
 

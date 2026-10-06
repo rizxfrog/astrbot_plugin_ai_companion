@@ -117,7 +117,8 @@ CREATE TABLE IF NOT EXISTS extraction_state (
 );
 
 -- ============================================================
--- 事件记忆（预留给后续版本：把发生的事总结成事件线）
+-- 事件记忆：把发生的关键事情总结成事件线
+-- 事件属于某个会话（umo_scope），参与者指向全局实体。
 -- ============================================================
 CREATE TABLE IF NOT EXISTS events (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -129,9 +130,13 @@ CREATE TABLE IF NOT EXISTS events (
     occurred_at   REAL    NOT NULL DEFAULT 0,
     created_at    REAL    NOT NULL DEFAULT 0
 );
+CREATE INDEX IF NOT EXISTS idx_events_scope_time
+    ON events(umo_scope, occurred_at DESC);
 CREATE TABLE IF NOT EXISTS event_participants (
     event_id   INTEGER NOT NULL,
     entity_id  TEXT    NOT NULL,
     role       TEXT    NOT NULL DEFAULT '',
     PRIMARY KEY (event_id, entity_id)
 );
+CREATE INDEX IF NOT EXISTS idx_event_participants_entity
+    ON event_participants(entity_id);

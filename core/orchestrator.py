@@ -41,6 +41,7 @@ class TurnResult:
     conversation: Any = None
     extra_parts: list = field(default_factory=list)
     people_hint: str = ""
+    events_hint: str = ""
 
 
 class Orchestrator:
@@ -149,6 +150,9 @@ class Orchestrator:
                 if cfg.inject_people_context
                 else ""
             ),
+            events_hint=(
+                await self._events_hint(umo) if cfg.inject_events_context else ""
+            ),
         )
 
     async def _maybe_compact(self, umo: str, conversation: Any) -> Any:
@@ -217,6 +221,15 @@ class Orchestrator:
         if rels:
             line += "（关系：" + "，".join(rels) + "）"
         return line if (parts or rels) else ""
+
+    async def _events_hint(self, umo: str) -> str:
+        """摘一句「最近发生的事」，用于本轮动态上下文。"""
+        if self.extractor is None:
+            return ""
+        try:
+            return await self.extractor.recent_events_hint(umo, limit=3)
+        except Exception:
+            return ""
 
     # ------------------------------------------------------------------
     # 读空气实现

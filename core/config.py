@@ -134,6 +134,9 @@ class CompanionConfig:
         self.inject_people_context = _as_bool(
             self.raw.get("inject_people_context"), True
         )
+        self.inject_events_context = _as_bool(
+            self.raw.get("inject_events_context"), True
+        )
         self.system_prompt_extra = _as_str(self.raw.get("system_prompt_extra"), "")
         self.inject_time = _as_bool(self.raw.get("inject_time"), True)
         self.debug_mode = _as_bool(self.raw.get("debug_mode"), False)

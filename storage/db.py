@@ -25,8 +25,8 @@ from astrbot.api import logger
 # trigram 分词器要求查询串至少 3 个字符才能命中，短查询回退 LIKE。
 FTS_MIN_QUERY_CHARS = 3
 
-# 数据库结构版本：v0.4 起为 2（人物/关系表改为全局实体图）
-SCHEMA_VERSION = 2
+# 数据库结构版本：2 = 人物/关系改为全局实体图；3 = 事件记忆启用
+SCHEMA_VERSION = 3
 
 
 class MemoryDB:
@@ -65,13 +65,14 @@ class MemoryDB:
         """结构升级。
 
         v0.1~v0.3 的人物/关系表是占位骨架（从未写入过数据），v0.4 起改为
-        全局实体图结构。旧表若存在且为空，直接重建；有数据则保留不动。
+        全局实体图结构；v0.5 起启用事件记忆。旧表若存在且为空，直接重建；
+        有数据则保留不动。
         """
         version = int(conn.execute("PRAGMA user_version").fetchone()[0])
         if version >= SCHEMA_VERSION:
             return
 
-        legacy = ("profiles", "entity_aliases", "relations")
+        legacy = ("profiles", "entity_aliases", "relations", "events")
         for table in legacy:
             exists = conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
@@ -581,6 +582,131 @@ class MemoryDB:
             return list(rows or [])
 
         return await self._run(_op)
+
+    # ------------------------------------------------------------------
+    # 事件记忆
+    # ------------------------------------------------------------------
+    async def insert_event(
+        self,
+        *,
+        umo: str,
+        title: str,
+        summary: str = "",
+        event_type: str = "",
+        importance: float = 0.5,
+        occurred_at: float | None = None,
+        participants: list[tuple[str, str]] | None = None,
+    ) -> int:
+        """写入一个事件及其参与者，返回事件 ID。"""
+        ts = time.time()
+        occurred = ts if occurred_at is None else occurred_at
+        people = participants or []
+
+        def _op() -> int:
+            cur = self._conn.execute(  # type: ignore[union-attr]
+                "INSERT INTO events "
+                "(umo_scope, title, summary, event_type, importance, occurred_at, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    umo,
+                    title[:200],
+                    summary[:1000],
+                    event_type[:50],
+                    max(0.0, min(1.0, importance)),
+                    occurred,
+                    ts,
+                ),
+            )
+            event_id = int(cur.lastrowid or 0)
+            if people:
+                self._conn.executemany(  # type: ignore[union-attr]
+                    "INSERT OR IGNORE INTO event_participants "
+                    "(event_id, entity_id, role) VALUES (?, ?, ?)",
+                    [(event_id, eid, role) for eid, role in people if eid],
+                )
+            self._conn.commit()  # type: ignore[union-attr]
+            cur.close()
+            return event_id
+
+        return await self._run(_op)
+
+    async def get_recent_events(
+        self, umo: str | None = None, *, limit: int = 10
+    ) -> list[dict]:
+        """按时间倒序取事件（可选按会话过滤），并附带参与者。"""
+
+        def _op() -> list[dict]:
+            if umo is None:
+                rows = self._execute(
+                    "SELECT * FROM events ORDER BY occurred_at DESC LIMIT ?",
+                    (limit,),
+                    fetch="all",
+                )
+            else:
+                rows = self._execute(
+                    "SELECT * FROM events WHERE umo_scope = ? "
+                    "ORDER BY occurred_at DESC LIMIT ?",
+                    (umo, limit),
+                    fetch="all",
+                )
+            return [self._attach_participants(dict(r)) for r in (rows or [])]
+
+        return await self._run(_op)
+
+    async def search_events(
+        self, query: str, *, umo: str | None = None, limit: int = 10
+    ) -> list[dict]:
+        """在事件标题与摘要里做关键词检索。"""
+        query = (query or "").strip()
+        if not query:
+            return []
+        pattern = f"%{query}%"
+
+        def _op() -> list[dict]:
+            if umo is None:
+                rows = self._execute(
+                    "SELECT * FROM events WHERE title LIKE ? OR summary LIKE ? "
+                    "ORDER BY occurred_at DESC LIMIT ?",
+                    (pattern, pattern, limit),
+                    fetch="all",
+                )
+            else:
+                rows = self._execute(
+                    "SELECT * FROM events WHERE umo_scope = ? "
+                    "AND (title LIKE ? OR summary LIKE ?) "
+                    "ORDER BY occurred_at DESC LIMIT ?",
+                    (umo, pattern, pattern, limit),
+                    fetch="all",
+                )
+            return [self._attach_participants(dict(r)) for r in (rows or [])]
+
+        return await self._run(_op)
+
+    async def get_events_for_entity(
+        self, entity_id: str, *, limit: int = 10
+    ) -> list[dict]:
+        """某个参与过的事件（用于「他经历过什么」）。"""
+
+        def _op() -> list[dict]:
+            rows = self._execute(
+                "SELECT e.* FROM events e JOIN event_participants p "
+                "ON p.event_id = e.id WHERE p.entity_id = ? "
+                "ORDER BY e.occurred_at DESC LIMIT ?",
+                (entity_id, limit),
+                fetch="all",
+            )
+            return [self._attach_participants(dict(r)) for r in (rows or [])]
+
+        return await self._run(_op)
+
+    def _attach_participants(self, event: dict) -> dict:
+        rows = self._execute(
+            "SELECT entity_id, role FROM event_participants WHERE event_id = ?",
+            (event["id"],),
+            fetch="all",
+        )
+        event["participants"] = [dict(r) for r in (rows or [])]
+        return event
 
     @staticmethod
     def _load_json_list(raw: Any) -> list:

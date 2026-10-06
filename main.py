@@ -31,7 +31,7 @@ from .decision import (
 )
 from .memory import Compactor, KnowledgeExtractor
 from .storage import MemoryDB
-from .tools import LookupPersonTool, SearchHistoryTool
+from .tools import LookupPersonTool, RecallEventsTool, SearchHistoryTool
 
 PLUGIN_NAME = "astrbot_plugin_ai_companion"
 
@@ -110,6 +110,7 @@ class AICompanionPlugin(Star):
             self.context.add_llm_tools(
                 SearchHistoryTool(db=self.db),
                 LookupPersonTool(extractor=self.extractor),
+                RecallEventsTool(extractor=self.extractor),
             )
         except Exception as e:
             logger.error(f"[ai_companion] 注册工具失败: {e}", exc_info=True)
@@ -179,9 +180,11 @@ class AICompanionPlugin(Star):
                 conversation=result.conversation,
             )
             extra = list(result.extra_parts) if result.extra_parts else []
-            if result.people_hint:
+            if result.people_hint or result.events_hint:
                 extra.extend(
-                    self.assembler.build_extra_parts(self.config, result.people_hint)
+                    self.assembler.build_extra_parts(
+                        self.config, result.people_hint, result.events_hint
+                    )
                 )
             if extra:
                 request.extra_user_content_parts.extend(extra)

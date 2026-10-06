@@ -245,6 +245,12 @@
     "default": true,
     "hint": "回复时若发言者已有画像或关系，把「对这个人/这些关系的了解」摘一句提示给 AI。内容很小，不会显著增加 token。"
   },
+  "inject_events_context": {
+    "description": "在对话中提示最近发生的事",
+    "type": "bool",
+    "default": true,
+    "hint": "回复时把该会话最近的关键事件摘一句提示给 AI，让它记得「你们之前约好过什么」。同样只占极小篇幅。"
+  },
   "debug_mode": {
     "description": "调试日志",
     "type": "bool",

@@ -22,24 +22,27 @@ from typing import Any
 
 from astrbot.api import logger
 
-EXTRACT_SYSTEM_PROMPT = """你负责从聊天记录里提取关于人的信息。
+EXTRACT_SYSTEM_PROMPT = """你负责从聊天记录里提取关于人和事的长期记忆。
 
 只输出 JSON，不要多余文字：
 {"people":[{"name":"小明","traits":["开朗","话痨"],"style":"说话很随意"}],
- "relations":[{"a":"小明","b":"小红","relation":"姐妹","evidence":"小明说小红是我姐"}]}
+ "relations":[{"a":"小明","b":"小红","relation":"姐妹","evidence":"小明说小红是我姐"}],
+ "events":[{"title":"小明和小红约好周末去爬山","summary":"两人约定周六一早出发，小红担心体力","type":"约定","importance":0.7,"participants":["小明","小红"]}]}
 
 规则：
-- name 用聊天记录里出现的称呼，原样照抄。
-- traits 是这个人的性格或特点，最多 3 个，必须有依据；没有就留空数组。
-- style 是一句话描述他/她的说话风格，没有就留空。
-- relations 只写对话里明确体现的关系（姐妹、恋人、朋友、同事、父子等），没有就留空。
-- 不确定的一律不要写。完全没内容就返回 {"people":[],"relations":[]}。"""
+- people：name 原样照抄聊天里出现的称呼；traits 最多 3 个且必须有依据；style 一句话。
+- relations：只写明确体现的关系（姐妹、恋人、朋友、同事、父子等），没有就留空。
+- events：只记**值得记住的事**——约定、计划、重要变化、共同经历、情绪转折、冲突。
+  不要记寒暄和日常闲聊。title 一句话说清发生了什么；type 用「约定/计划/经历/变化/冲突/其他」；
+  importance 0~1（越重要越高）；participants 写涉及的称呼。
+- 不确定的一律不要写。完全没内容就返回 {"people":[],"relations":[],"events":[]}。"""
 
 
 @dataclass
 class ExtractionResult:
     people: int = 0
     relations: int = 0
+    events: int = 0
     processed: int = 0
     reason: str = ""
 
@@ -107,7 +110,7 @@ class KnowledgeExtractor:
                     f"[ai_companion] {umo} 知识抽取失败: {e}", exc_info=True
                 )
                 continue
-            if result.people or result.relations:
+            if result.people or result.relations or result.events:
                 done += 1
         return done
 
@@ -129,18 +132,25 @@ class KnowledgeExtractor:
         if data is None:
             return ExtractionResult(reason="抽取失败（不推进游标）")
 
-        people, relations = await self._apply(data, name_map)
+        latest_ts = max(float(r["created_at"]) for r in rows)
+        people, relations, events = await self._apply(
+            umo, data, name_map, occurred_at=latest_ts
+        )
 
         # 推进游标：只消费到本批最后一条
         last_id = max(int(r["id"]) for r in rows)
         await self.db.set_extraction_cursor(umo, last_id)
 
         logger.info(
-            f"[ai_companion] {umo} 知识抽取完成：{people} 人 / {relations} 关系"
-            f"（消费 {len(rows)} 条消息）"
+            f"[ai_companion] {umo} 知识抽取完成：{people} 人 / {relations} 关系 / "
+            f"{events} 事件（消费 {len(rows)} 条消息）"
         )
         return ExtractionResult(
-            people=people, relations=relations, processed=len(rows), reason="已抽取"
+            people=people,
+            relations=relations,
+            events=events,
+            processed=len(rows),
+            reason="已抽取",
         )
 
     # ------------------------------------------------------------------
@@ -189,17 +199,25 @@ class KnowledgeExtractor:
 
     # ------------------------------------------------------------------
     async def _apply(
-        self, data: dict, name_map: dict[str, str]
-    ) -> tuple[int, int]:
+        self, umo: str, data: dict, name_map: dict[str, str], *, occurred_at: float
+    ) -> tuple[int, int, int]:
         people = data.get("people") or []
         relations = data.get("relations") or []
+        events = data.get("events") or []
 
         # 先把本批出现的名字解析为实体 ID
+        names: list[str] = []
+        for person in people:
+            names.append(str(person.get("name") or ""))
+        for rel in relations:
+            names.extend([str(rel.get("a") or ""), str(rel.get("b") or "")])
+        for event in events:
+            for p in event.get("participants") or []:
+                names.append(str(p or ""))
+
         resolved: dict[str, str] = {}
-        for person in people + [{"name": r.get("a")} for r in relations] + [
-            {"name": r.get("b")} for r in relations
-        ]:
-            name = str((person or {}).get("name") or "").strip()
+        for raw_name in names:
+            name = raw_name.strip()
             if not name or name in resolved:
                 continue
             resolved[name] = await self._resolve_name(name, name_map)
@@ -236,7 +254,63 @@ class KnowledgeExtractor:
             )
             saved_relations += 1
 
-        return saved_people, saved_relations
+        saved_events = 0
+        for event in events:
+            title = str(event.get("title") or "").strip()
+            if not title:
+                continue
+            participants: list[tuple[str, str]] = []
+            for raw in event.get("participants") or []:
+                pname = str(raw or "").strip()
+                if not pname:
+                    continue
+                eid = resolved.get(pname) or await self._resolve_name(pname, name_map)
+                await self.db.touch_entity(eid, pname)
+                await self.db.bind_alias(pname, eid)
+                participants.append((eid, ""))
+
+            # 去重：同会话已有高度相似的标题则跳过，避免同一件事被反复记
+            if await self._is_duplicate_event(umo, title):
+                continue
+
+            try:
+                importance = float(event.get("importance", 0.5))
+            except (TypeError, ValueError):
+                importance = 0.5
+
+            await self.db.insert_event(
+                umo=umo,
+                title=title,
+                summary=str(event.get("summary") or ""),
+                event_type=str(event.get("type") or ""),
+                importance=importance,
+                occurred_at=occurred_at,
+                participants=participants,
+            )
+            saved_events += 1
+
+        return saved_people, saved_relations, saved_events
+
+    async def _is_duplicate_event(self, umo: str, title: str) -> bool:
+        """粗略去重：同会话近期是否已有相似标题的事件。"""
+        try:
+            recent = await self.db.get_recent_events(umo, limit=20)
+        except Exception:
+            return False
+        normalized = _normalize_title(title)
+        for event in recent:
+            existing = _normalize_title(str(event.get("title") or ""))
+            if not existing:
+                continue
+            if normalized == existing:
+                return True
+            # 字符级相似度：中文事件标题短，用集合重叠比即可
+            overlap = len(set(normalized) & set(existing)) / max(
+                len(set(normalized) | set(existing)), 1
+            )
+            if overlap >= 0.85:
+                return True
+        return False
 
     async def _resolve_name(self, name: str, name_map: dict[str, str]) -> str:
         """称呼 -> 实体 ID：本批发送者优先，其次历史别名，最后建临时实体。"""
@@ -249,7 +323,7 @@ class KnowledgeExtractor:
 
     # ------------------------------------------------------------------
     async def describe_person(self, name_or_id: str) -> dict:
-        """查一个人：画像 + 关系。供工具与上下文注入使用。"""
+        """查一个人：画像 + 关系 + 经历过的事。供工具与上下文注入使用。"""
         entity_id = name_or_id
         entity = await self.db.get_entity(entity_id)
         if entity is None:
@@ -260,6 +334,7 @@ class KnowledgeExtractor:
 
         profile = await self.db.get_profile(entity_id)
         relations = await self.db.get_relations(entity_id)
+        events = await self.db.get_events_for_entity(entity_id, limit=5)
         return {
             "entity_id": entity_id,
             "name": (entity or {}).get("last_name") or name_or_id,
@@ -275,7 +350,47 @@ class KnowledgeExtractor:
                 }
                 for r in relations
             ],
+            "events": [
+                {
+                    "title": e.get("title"),
+                    "summary": e.get("summary"),
+                    "type": e.get("event_type"),
+                }
+                for e in events
+            ],
         }
+
+    async def recall_events(self, query: str = "", *, umo: str = "", limit: int = 5) -> list[dict]:
+        """回忆事件：有关键词则检索，否则取最近的事件线。"""
+        scope = umo or None
+        if query.strip():
+            events = await self.db.search_events(query, umo=scope, limit=limit)
+        else:
+            events = await self.db.get_recent_events(scope, limit=limit)
+        return [
+            {
+                "title": e.get("title"),
+                "summary": e.get("summary"),
+                "type": e.get("event_type"),
+                "when": _fmt_ts(e.get("occurred_at")),
+                "participants": [
+                    await self._name_of(p["entity_id"]) for p in e.get("participants", [])
+                ],
+            }
+            for e in events
+        ]
+
+    async def recent_events_hint(self, umo: str, limit: int = 3) -> str:
+        """把最近的关键事件摘成一行，用于本轮上下文。"""
+        try:
+            events = await self.db.get_recent_events(umo, limit=limit)
+        except Exception:
+            return ""
+        titles = [str(e.get("title") or "").strip() for e in events]
+        titles = [t for t in titles if t]
+        if not titles:
+            return ""
+        return "；".join(titles)
 
     async def _name_of(self, entity_id: str) -> str:
         entity = await self.db.get_entity(entity_id)
@@ -295,6 +410,21 @@ class KnowledgeExtractor:
         await self.db.touch_entity(entity_id, display_name)
         if display_name and display_name != entity_id:
             await self.db.bind_alias(display_name, entity_id)
+
+
+def _fmt_ts(ts: Any) -> str:
+    try:
+        import time
+
+        return time.strftime("%Y-%m-%d %H:%M", time.localtime(float(ts)))
+    except (TypeError, ValueError):
+        return ""
+
+
+def _normalize_title(text: str) -> str:
+    """归一事件标题用于去重：去空白与标点，统一大小写。"""
+    stripped = "".join(ch for ch in text if not ch.isspace())
+    return stripped.strip("，。！？、,.!?;；:：").lower()
 
 
 def _parse_json(text: str) -> dict | None:
