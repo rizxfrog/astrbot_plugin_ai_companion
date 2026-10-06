@@ -11,7 +11,6 @@ P0 能力：
 
 from __future__ import annotations
 
-import asyncio
 import random
 from pathlib import Path
 from typing import Any
@@ -103,9 +102,7 @@ class AICompanionPlugin(Star):
             conversation_manager=getattr(self.context, "conversation_manager", None),
             context=self.context,
             compactor=Compactor(
-                conversation_manager=getattr(
-                    self.context, "conversation_manager", None
-                ),
+                conversation_manager=getattr(self.context, "conversation_manager", None),
                 db=self.db,
                 context=self.context,
                 config=self.config,
@@ -126,9 +123,8 @@ class AICompanionPlugin(Star):
             判定不回复，只有命中的少数消息才会真正调用模型。
             """
             cfg = self.config
-            if not ctx.is_private and not ctx.is_mention:
-                if cfg.group_reply_probability >= 0:
-                    return cfg.group_reply_probability
+            if not ctx.is_private and not ctx.is_mention and cfg.group_reply_probability >= 0:
+                return cfg.group_reply_probability
             return cfg.reply_probability
 
         if self.config.enable_llm_judge:
@@ -143,7 +139,8 @@ class AICompanionPlugin(Star):
             logger.info(
                 "[ai_companion] 已启用 AI 读空气决策"
                 f"（群聊决策概率 "
-                f"{self.config.group_reply_probability if self.config.group_reply_probability >= 0 else self.config.reply_probability}）"
+                f"{self.config.group_reply_probability if self.config.group_reply_probability >= 0 else self.config.reply_probability}"  # noqa: E501
+                "）"
             )
         else:
             deciders.append(ProbabilityDecider(rate=_gate_rate))
@@ -308,9 +305,7 @@ class AICompanionPlugin(Star):
             directive = build_identity_directive(
                 is_group=not event.is_private_chat(),
             )
-            req.extra_user_content_parts.append(
-                TextPart(text=directive).mark_as_temp()
-            )
+            req.extra_user_content_parts.append(TextPart(text=directive).mark_as_temp())
             if cfg.debug_mode:
                 logger.info("[ai_companion] 识别到身份追问，已注入岔开指令")
         except Exception:
@@ -360,7 +355,8 @@ class AICompanionPlugin(Star):
             from astrbot.core.message.components import Plain
 
             text = "".join(
-                c.text for c in message_result.chain
+                c.text
+                for c in message_result.chain
                 if isinstance(c, Plain) and getattr(c, "text", "")
             )
         except Exception:
@@ -392,9 +388,7 @@ class AICompanionPlugin(Star):
         except Exception:
             return False
         if cfg.debug_mode:
-            logger.info(
-                f"[ai_companion] 检测到自曝身份，已替换为兜底话术: {replacement!r}"
-            )
+            logger.info(f"[ai_companion] 检测到自曝身份，已替换为兜底话术: {replacement!r}")
         return True
 
     async def _send_image(self, umo: str, image: Any) -> bool:
@@ -468,7 +462,8 @@ class AICompanionPlugin(Star):
                     item[key] = cleaned
         # 丢弃被清空的段
         tool_args["messages"] = [
-            m for m in messages
+            m
+            for m in messages
             if not (
                 isinstance(m, dict)
                 and str(m.get("type", "plain")).lower() == "plain"
@@ -521,9 +516,7 @@ class AICompanionPlugin(Star):
         if not keyword:
             yield event.plain_result("用法：/companion_search 关键词")
             return
-        rows = await self.db.search_messages(
-            keyword, umo=event.unified_msg_origin, limit=10
-        )
+        rows = await self.db.search_messages(keyword, umo=event.unified_msg_origin, limit=10)
         if not rows:
             yield event.plain_result(f"没有找到包含「{keyword}」的记录")
             return

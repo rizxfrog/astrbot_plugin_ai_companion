@@ -29,8 +29,7 @@ os.environ.setdefault("ASTRBOT_ROOT", tempfile.mkdtemp(prefix="aic-p5-"))
 def db(tmp_path):
     from astrbot_plugin_ai_companion.storage import MemoryDB
 
-    d = MemoryDB(db_path=tmp_path / "p5.db",
-                 schema_path=PLUGIN_DIR / "storage" / "schema.sql")
+    d = MemoryDB(db_path=tmp_path / "p5.db", schema_path=PLUGIN_DIR / "storage" / "schema.sql")
     return d
 
 
@@ -81,8 +80,9 @@ def _extractor(db, payload, cfg=None):
 
 async def _seed(db, umo="p:GroupMessage:1", n=3):
     for i in range(n):
-        await db.insert_message(umo=umo, role="user", content=f"消息{i}",
-                                sender_id="u1", sender_name="小明")
+        await db.insert_message(
+            umo=umo, role="user", content=f"消息{i}", sender_id="u1", sender_name="小明"
+        )
     await db.insert_message(umo=umo, role="assistant", content="嗯")
 
 
@@ -93,12 +93,17 @@ def test_insert_and_query_events(db):
     async def scenario():
         await db.connect()
         await db.insert_event(
-            umo="p:GroupMessage:1", title="小明和小红约好周末爬山",
-            summary="周六一早出发", event_type="约定", importance=0.8,
+            umo="p:GroupMessage:1",
+            title="小明和小红约好周末爬山",
+            summary="周六一早出发",
+            event_type="约定",
+            importance=0.8,
             participants=[("u1", ""), ("u2", "")],
         )
         await db.insert_event(
-            umo="p:GroupMessage:2", title="另一个群的事", event_type="其他",
+            umo="p:GroupMessage:2",
+            title="另一个群的事",
+            event_type="其他",
         )
 
         # 会话隔离
@@ -167,11 +172,16 @@ def test_duplicate_events_are_skipped(db):
         assert r1.events == 1
 
         # 再灌消息，模型又给出同一件事（标点/空格略有不同）-> 应去重
-        await db.insert_message(umo="p:GroupMessage:1", role="user",
-                                content="又说了爬山的事", sender_id="u1",
-                                sender_name="小明")
-        await db.insert_message(umo="p:GroupMessage:1", role="user",
-                                content="嗯嗯", sender_id="u1", sender_name="小明")
+        await db.insert_message(
+            umo="p:GroupMessage:1",
+            role="user",
+            content="又说了爬山的事",
+            sender_id="u1",
+            sender_name="小明",
+        )
+        await db.insert_message(
+            umo="p:GroupMessage:1", role="user", content="嗯嗯", sender_id="u1", sender_name="小明"
+        )
         ex2 = _extractor(
             db,
             '{"people":[],"relations":[],"events":['

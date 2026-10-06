@@ -125,9 +125,7 @@ class StickerLibrary:
     def all_category(self) -> str:
         return DEFAULT_CATEGORY
 
-    def pick(
-        self, category: str | None = None, *, rng: random.Random | None = None
-    ) -> Path | None:
+    def pick(self, category: str | None = None, *, rng: random.Random | None = None) -> Path | None:
         """随机取一张表情包。
 
         ``category`` 为空或不存在时，退回到「通用 + 全部分类」的合并池，
@@ -152,6 +150,8 @@ class StickerLibrary:
         requested = (requested or "").strip()
         if requested in self._index:
             return requested
-        return DEFAULT_CATEGORY if DEFAULT_CATEGORY in self._index else (
-            self.categories()[0] if self._index else ""
+        return (
+            DEFAULT_CATEGORY
+            if DEFAULT_CATEGORY in self._index
+            else (self.categories()[0] if self._index else "")
         )

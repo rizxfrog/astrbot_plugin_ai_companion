@@ -20,7 +20,7 @@ if TYPE_CHECKING:  # pragma: no cover
 class RecallEventsTool(FunctionTool):
     """回忆之前发生过的事情。"""
 
-    extractor: "KnowledgeExtractor | None" = None
+    extractor: KnowledgeExtractor | None = None
 
     name: str = "recall_events"
     description: str = (
@@ -45,15 +45,13 @@ class RecallEventsTool(FunctionTool):
         }
     )
 
-    async def run(
-        self, event: AstrMessageEvent, query: str = "", scope: str = "current"
-    ) -> str:
+    async def run(self, event: AstrMessageEvent, query: str = "", scope: str = "current") -> str:
         if self.extractor is None:
             return json.dumps({"error": "记忆未就绪"}, ensure_ascii=False)
         umo = event.unified_msg_origin if scope != "all" else ""
         try:
             events = await self.extractor.recall_events(query, umo=umo, limit=6)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.error(f"[ai_companion] 事件回忆失败: {e}", exc_info=True)
             return json.dumps({"error": "回忆失败"}, ensure_ascii=False)
         return json.dumps({"found": len(events), "events": events}, ensure_ascii=False)

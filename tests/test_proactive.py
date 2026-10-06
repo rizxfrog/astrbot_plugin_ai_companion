@@ -79,9 +79,7 @@ def test_candidates_respect_threshold_and_limits():
     capped.last_message_ts = now - 3600 * 2
     capped.unanswered_count = 2  # 已达上限
 
-    cands = reg.proactive_candidates(
-        threshold_seconds=3600, max_unanswered=2, now=now
-    )
+    cands = reg.proactive_candidates(threshold_seconds=3600, max_unanswered=2, now=now)
     names = {a.umo for a in cands}
     assert names == {"p:GroupMessage:silent"}, names
 
@@ -141,8 +139,7 @@ def _run(coro):
 def db(tmp_path):
     from astrbot_plugin_ai_companion.storage import MemoryDB
 
-    d = MemoryDB(db_path=tmp_path / "p3.db",
-                 schema_path=PLUGIN_DIR / "storage" / "schema.sql")
+    d = MemoryDB(db_path=tmp_path / "p3.db", schema_path=PLUGIN_DIR / "storage" / "schema.sql")
     return d
 
 
@@ -153,7 +150,11 @@ def _make(cfg, db, provider=None):
     ctx = FakeContext(provider)
     reg = SessionRegistry()
     sched = ProactiveScheduler(
-        config=cfg, registry=reg, db=db, context=ctx, conversation_manager=None,
+        config=cfg,
+        registry=reg,
+        db=db,
+        context=ctx,
+        conversation_manager=None,
     )
     return sched, reg, ctx, provider
 
@@ -166,8 +167,9 @@ def test_proactive_speaks_and_counts(db):
 
         actor = reg.get("p:GroupMessage:g1")
         actor.last_message_ts = time.time() - 7200
-        await db.insert_message(umo=actor.umo, role="user",
-                                content="我先去忙了", sender_name="小明")
+        await db.insert_message(
+            umo=actor.umo, role="user", content="我先去忙了", sender_name="小明"
+        )
 
         await sched._run_for(actor)
 
@@ -257,9 +259,13 @@ def test_whitelist_gating():
 
     cfg = _cfg(proactive_sessions=["p:GroupMessage:allowed"])
     reg = SessionRegistry()
-    sched = ProactiveScheduler(config=cfg, registry=reg, db=None,
-                               context=FakeContext(FakeProvider()),
-                               conversation_manager=None)
+    sched = ProactiveScheduler(
+        config=cfg,
+        registry=reg,
+        db=None,
+        context=FakeContext(FakeProvider()),
+        conversation_manager=None,
+    )
     assert sched._is_allowed("p:GroupMessage:allowed", cfg) is True
     assert sched._is_allowed("p:GroupMessage:other", cfg) is False, "不在白名单应拒绝"
 
@@ -272,25 +278,37 @@ def test_whitelist_is_the_real_gate():
     from astrbot_plugin_ai_companion.core import ProactiveScheduler, SessionRegistry
 
     cfg = _cfg(proactive_sessions=[])
-    sched = ProactiveScheduler(config=cfg, registry=SessionRegistry(), db=None,
-                               context=FakeContext(FakeProvider()),
-                               conversation_manager=None)
+    sched = ProactiveScheduler(
+        config=cfg,
+        registry=SessionRegistry(),
+        db=None,
+        context=FakeContext(FakeProvider()),
+        conversation_manager=None,
+    )
     # 白名单为空 -> 谁都不主动（安全默认）
     assert sched._is_allowed("p:GroupMessage:x", cfg) is False
     assert sched._is_allowed("p:FriendMessage:x", cfg) is False
 
     # 显式关闭某类型时，即使白名单命中也不主动
     cfg2 = _cfg(proactive_sessions=["p:GroupMessage:x"], proactive_group=False)
-    sched2 = ProactiveScheduler(config=cfg2, registry=SessionRegistry(), db=None,
-                                context=FakeContext(FakeProvider()),
-                                conversation_manager=None)
+    sched2 = ProactiveScheduler(
+        config=cfg2,
+        registry=SessionRegistry(),
+        db=None,
+        context=FakeContext(FakeProvider()),
+        conversation_manager=None,
+    )
     assert sched2._is_allowed("p:GroupMessage:x", cfg2) is False
 
     # "*" 表示主动全部会话
     cfg3 = _cfg(proactive_sessions=["*"])
-    sched3 = ProactiveScheduler(config=cfg3, registry=SessionRegistry(), db=None,
-                                context=FakeContext(FakeProvider()),
-                                conversation_manager=None)
+    sched3 = ProactiveScheduler(
+        config=cfg3,
+        registry=SessionRegistry(),
+        db=None,
+        context=FakeContext(FakeProvider()),
+        conversation_manager=None,
+    )
     assert sched3._is_allowed("p:GroupMessage:anything", cfg3) is True
 
 
@@ -299,7 +317,9 @@ def test_state_persistence_roundtrip(db):
         await db.connect()
         await db.upsert_session_state(
             "p:GroupMessage:g9",
-            last_message_ts=111.0, unanswered_count=2, last_proactive_ts=222.0,
+            last_message_ts=111.0,
+            unanswered_count=2,
+            last_proactive_ts=222.0,
         )
         rows = await db.load_session_states()
         match = [r for r in rows if r["umo"] == "p:GroupMessage:g9"]
@@ -313,6 +333,4 @@ def test_state_persistence_roundtrip(db):
 def test_scheduler_disabled_by_default():
     from astrbot_plugin_ai_companion.core import CompanionConfig
 
-    assert CompanionConfig({}).enable_proactive is False, (
-        "主动消息必须默认关闭，避免意外打扰"
-    )
+    assert CompanionConfig({}).enable_proactive is False, "主动消息必须默认关闭，避免意外打扰"

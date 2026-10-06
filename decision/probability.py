@@ -17,9 +17,9 @@
 from __future__ import annotations
 
 import random
-from typing import Awaitable, Callable
+from collections.abc import Callable
 
-from .base import TurnContext, Decision, ReplyDecider, reply, skip
+from .base import Decision, ReplyDecider, TurnContext, reply, skip
 
 # 由编排层注入：根据本轮上下文决定「进入 AI 决策的概率」
 RateProvider = Callable[[TurnContext], float]

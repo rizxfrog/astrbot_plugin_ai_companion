@@ -54,8 +54,8 @@ class CompactResult:
     """一次压缩的结果。"""
 
     compacted: bool
-    dropped: int = 0          # 被替换掉的原文条数
-    kept: int = 0             # 保留的原文条数
+    dropped: int = 0  # 被替换掉的原文条数
+    kept: int = 0  # 保留的原文条数
     summary_len: int = 0
     reason: str = ""
 
@@ -133,9 +133,7 @@ class Compactor:
         return await self._do_compact(umo, cid, history)
 
     # ------------------------------------------------------------------
-    async def _do_compact(
-        self, umo: str, cid: str, history: list[dict]
-    ) -> CompactResult:
+    async def _do_compact(self, umo: str, cid: str, history: list[dict]) -> CompactResult:
         cfg = self.config
 
         # 划分：可压缩区（较老） / 保留区（最近 compact_keep_recent 条）
@@ -159,16 +157,14 @@ class Compactor:
             # 摘要失败：保持历史原样，宁可不压缩
             return CompactResult(False, reason="摘要生成失败")
 
-        new_history = (
-            [_make_summary_message(summary)]
-            + checkpoints
-            + list(history[cut:])
-        )
+        new_history = [
+            _make_summary_message(summary),
+            *checkpoints,
+            *history[cut:],
+        ]
 
         try:
-            await self.conversation_manager.update_conversation(
-                umo, cid, history=new_history
-            )
+            await self.conversation_manager.update_conversation(umo, cid, history=new_history)
         except Exception as e:
             logger.error(f"[ai_companion] 写入压缩后历史失败: {e}", exc_info=True)
             return CompactResult(False, reason="写入失败")
@@ -188,9 +184,7 @@ class Compactor:
         return result
 
     # ------------------------------------------------------------------
-    async def _summarize(
-        self, messages: list[dict], previous_summary: str
-    ) -> str:
+    async def _summarize(self, messages: list[dict], previous_summary: str) -> str:
         provider = await self._resolve_provider()
         if provider is None:
             logger.warning("[ai_companion] 无可用模型，跳过压缩")
@@ -225,9 +219,7 @@ class Compactor:
                 prov = self.context.get_provider_by_id(pid)
                 if prov is not None:
                     return prov
-                logger.warning(
-                    f"[ai_companion] 配置的压缩模型 {pid} 不存在，回退默认模型"
-                )
+                logger.warning(f"[ai_companion] 配置的压缩模型 {pid} 不存在，回退默认模型")
             return self.context.get_using_provider()
         except Exception as e:
             logger.error(f"[ai_companion] 解析压缩模型失败: {e}", exc_info=True)
@@ -236,9 +228,7 @@ class Compactor:
     @staticmethod
     def _render(message: dict) -> str:
         role = message.get("role", "?")
-        who = {"user": "对方", "assistant": "我", "system": "系统", "tool": "工具"}.get(
-            role, role
-        )
+        who = {"user": "对方", "assistant": "我", "system": "系统", "tool": "工具"}.get(role, role)
         text = _to_text(message.get("content"))
         return f"{who}: {text}"
 

@@ -34,9 +34,7 @@ STICKER_PATTERN = re.compile(r"\[(?:sticker|表情)(?::([^\]]*))?\]", re.IGNOREC
 
 # 模型想发表情/图片但没能真正附上媒体时，会留下这种悬空占位符。
 # 直接发出去会让用户看到 "[图片]" 这种字面量，因此在没有实际图片时清掉。
-DANGLING_PLACEHOLDER_PATTERN = re.compile(
-    r"\[(?:图片|image|照片|photo)\]", re.IGNORECASE
-)
+DANGLING_PLACEHOLDER_PATTERN = re.compile(r"\[(?:图片|image|照片|photo)\]", re.IGNORECASE)
 
 # 有些模型会把**工具调用当成文本写进正文**，形如：
 #     <invoke name="send_sticker"><parameter name="category">无语</parameter></invoke>
@@ -106,6 +104,7 @@ class Humanizer:
             return text, images
 
         if cfg.enable_stickers and not self.stickers.empty:
+
             def _sub(match):
                 # 闸门：AI 主动写的标记也要限流，否则"主动要"就必发
                 path, _ = self._pick_sticker(match.group(1), umo="")
@@ -188,9 +187,7 @@ class Humanizer:
             out.append(comp)
         return out
 
-    def _strip_markers(
-        self, chain: list, result: HumanizeResult
-    ) -> tuple[list, HumanizeResult]:
+    def _strip_markers(self, chain: list, result: HumanizeResult) -> tuple[list, HumanizeResult]:
         """只删除标记、不插图（表情库为空或功能关闭时使用）。
 
         这里**不计入** ``replaced``——该字段表示「有多少标记换成了图片」；
@@ -208,7 +205,9 @@ class Humanizer:
         return out, result
 
     # ------------------------------------------------------------------
-    def _apply_stickers(self, chain: list, result: HumanizeResult, *, umo: str = "") -> tuple[list, HumanizeResult]:
+    def _apply_stickers(
+        self, chain: list, result: HumanizeResult, *, umo: str = ""
+    ) -> tuple[list, HumanizeResult]:
         """处理 [sticker:分类] 标记，并按概率补一张。"""
         cfg = self.config
         out: list = []

@@ -49,7 +49,7 @@ CONFUSIONS: dict[str, tuple[str, ...]] = {
 }
 
 # 永不改动的字符：标点、空白、数字、表情标记里的符号
-_SAFE_PUNCT = set("，。！？、；：""''（）【】《》…—～,.!?;:()[]{}<>\"'`~ \n\r\t")
+_SAFE_PUNCT = set("，。！？、；：''（）【】《》…—～,.!?;:()[]{}<>\"'`~ \n\r\t")
 _MARKER_START = "[sticker"
 
 

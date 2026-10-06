@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .base import Decision, TurnContext, ReplyDecider, skip
+from .base import Decision, ReplyDecider, TurnContext, skip
 
 
 class RateLimitDecider(ReplyDecider):
@@ -21,8 +21,6 @@ class RateLimitDecider(ReplyDecider):
         if interval > 0 and actor.last_reply_ts > 0:
             elapsed = ctx.now - actor.last_reply_ts
             if elapsed < interval:
-                return skip(
-                    f"距上次回复仅 {elapsed:.1f}s（最小间隔 {interval}s）", self.name
-                )
+                return skip(f"距上次回复仅 {elapsed:.1f}s（最小间隔 {interval}s）", self.name)
 
         return None

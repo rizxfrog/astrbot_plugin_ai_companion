@@ -16,15 +16,13 @@ import sys
 import tempfile
 from pathlib import Path
 
-import pytest
-
 PLUGIN_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PLUGIN_DIR.parent))
 import os
 
 os.environ.setdefault("ASTRBOT_ROOT", tempfile.mkdtemp(prefix="aic-p6-"))
 
-from astrbot.core.message.components import Image, Plain  # noqa: E402
+from astrbot.core.message.components import Image, Plain
 
 
 class FakeResult:
@@ -187,9 +185,7 @@ def test_markers_stripped_when_feature_disabled(tmp_path):
 # 自动补表情
 # ----------------------------------------------------------------------
 def test_auto_sticker_appended_when_enabled(tmp_path):
-    h = _humanizer(
-        tmp_path, _cfg(sticker_auto_probability=1.0), rng=FakeRng(value=0.0)
-    )
+    h = _humanizer(tmp_path, _cfg(sticker_auto_probability=1.0), rng=FakeRng(value=0.0))
     event = FakeEvent([Plain("随便说点什么")])
     result = h.apply(event)
     assert result.appended is True
@@ -197,9 +193,7 @@ def test_auto_sticker_appended_when_enabled(tmp_path):
 
 
 def test_auto_sticker_not_added_when_already_sent(tmp_path):
-    h = _humanizer(
-        tmp_path, _cfg(sticker_auto_probability=1.0), rng=FakeRng(value=0.0)
-    )
+    h = _humanizer(tmp_path, _cfg(sticker_auto_probability=1.0), rng=FakeRng(value=0.0))
     event = FakeEvent([Plain("哈哈[sticker:开心]")])
     result = h.apply(event)
     assert result.replaced == 1
@@ -209,9 +203,7 @@ def test_auto_sticker_not_added_when_already_sent(tmp_path):
 
 
 def test_auto_sticker_probability_zero(tmp_path):
-    h = _humanizer(
-        tmp_path, _cfg(sticker_auto_probability=0.0), rng=FakeRng(value=0.0)
-    )
+    h = _humanizer(tmp_path, _cfg(sticker_auto_probability=0.0), rng=FakeRng(value=0.0))
     event = FakeEvent([Plain("没有表情")])
     result = h.apply(event)
     assert result.appended is False
@@ -255,9 +247,7 @@ def test_typo_probability_zero():
 
 
 def test_typo_applies_through_humanizer(tmp_path):
-    h = _humanizer(
-        tmp_path, _cfg(enable_typos=True, typo_probability=1.0), rng=FakeRng(value=0.0)
-    )
+    h = _humanizer(tmp_path, _cfg(enable_typos=True, typo_probability=1.0), rng=FakeRng(value=0.0))
     event = FakeEvent([Plain("我觉得挺好的")])
     result = h.apply(event)
     assert result.typo is True
@@ -305,7 +295,8 @@ def test_apply_to_text_without_library_strips_markers(tmp_path):
 
     h = Humanizer(
         stickers=StickerLibrary(roots=[tmp_path / "none"]),
-        config=_cfg(), rng=FakeRng(),
+        config=_cfg(),
+        rng=FakeRng(),
     )
     text, images = h.apply_to_text("你好[sticker:开心]")
     assert text == "你好"
@@ -335,9 +326,13 @@ def _sanitize(messages):
                 v = DANGLING_PLACEHOLDER_PATTERN.sub("", v).strip()
                 item[key] = v
     out = [
-        m for m in messages
-        if not (isinstance(m, dict) and str(m.get("type", "plain")).lower() == "plain"
-                and not str(m.get("text", "")).strip())
+        m
+        for m in messages
+        if not (
+            isinstance(m, dict)
+            and str(m.get("type", "plain")).lower() == "plain"
+            and not str(m.get("text", "")).strip()
+        )
     ]
     return out or [{"type": "plain", "text": "（表情）"}]
 

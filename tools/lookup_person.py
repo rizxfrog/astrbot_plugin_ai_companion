@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from astrbot.api import FunctionTool, logger
 from astrbot.api.event import AstrMessageEvent
@@ -20,7 +20,7 @@ if TYPE_CHECKING:  # pragma: no cover
 class LookupPersonTool(FunctionTool):
     """查询某个人的印象与关系。"""
 
-    extractor: "KnowledgeExtractor | None" = None
+    extractor: KnowledgeExtractor | None = None
 
     name: str = "lookup_person"
     description: str = (
@@ -48,7 +48,7 @@ class LookupPersonTool(FunctionTool):
             return json.dumps({"error": "缺少 name 参数"}, ensure_ascii=False)
         try:
             info = await self.extractor.describe_person(name)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.error(f"[ai_companion] 人物查询失败: {e}", exc_info=True)
             return json.dumps({"error": "查询失败"}, ensure_ascii=False)
         return json.dumps(info, ensure_ascii=False)

@@ -4,7 +4,7 @@
 对数间隔发送），本包不重复实现，避免双重延迟。
 """
 
-from .humanizer import HumanizeResult, Humanizer
+from .humanizer import Humanizer, HumanizeResult
 from .stickers import StickerLibrary, StickerRateLimiter
 from .typo import apply_typos
 

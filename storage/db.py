@@ -17,8 +17,9 @@ import asyncio
 import json
 import sqlite3
 import time
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 from astrbot.api import logger
 
@@ -80,18 +81,14 @@ class MemoryDB:
             ).fetchone()
             if not exists:
                 continue
-            cols = {
-                r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()
-            }
+            cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
             # 旧结构带有 umo_scope 列；新结构没有
             if "umo_scope" in cols:
                 count = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
                 if count == 0:
                     conn.execute(f"DROP TABLE {table}")
                 else:
-                    logger.warning(
-                        f"[ai_companion] {table} 含旧结构数据，保留不迁移（{count} 行）"
-                    )
+                    logger.warning(f"[ai_companion] {table} 含旧结构数据，保留不迁移（{count} 行）")
         conn.commit()
 
     async def close(self) -> None:
@@ -156,7 +153,8 @@ class MemoryDB:
         def _op() -> int:
             cur = self._conn.execute(  # type: ignore[union-attr]
                 "INSERT INTO messages "
-                "(umo, conversation, role, sender_id, sender_name, content, raw, created_at, is_proactive) "
+                "(umo, conversation, role, sender_id, sender_name, "
+                "content, raw, created_at, is_proactive) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     umo,
@@ -284,8 +282,7 @@ class MemoryDB:
             pattern = f"%{query}%"
             if umo is None:
                 rows = self._execute(
-                    "SELECT * FROM messages WHERE content LIKE ? "
-                    "ORDER BY created_at DESC LIMIT ?",
+                    "SELECT * FROM messages WHERE content LIKE ? ORDER BY created_at DESC LIMIT ?",
                     (pattern, limit),
                     fetch="all",
                 )
@@ -421,9 +418,7 @@ class MemoryDB:
                     json.dumps(merged_traits, ensure_ascii=False),
                     style if style else existing["style"],
                     notes if notes else existing["notes"],
-                    float(affinity)
-                    if affinity is not None
-                    else float(existing["affinity"]),
+                    float(affinity) if affinity is not None else float(existing["affinity"]),
                     time.time(),
                     entity_id,
                 ),
@@ -464,8 +459,7 @@ class MemoryDB:
 
         def _op() -> None:
             existing = self._execute(
-                "SELECT * FROM relations WHERE subject_id = ? AND predicate = ? "
-                "AND object_id = ?",
+                "SELECT * FROM relations WHERE subject_id = ? AND predicate = ? AND object_id = ?",
                 (subject_id, predicate, object_id),
                 fetch="one",
             )
@@ -494,8 +488,7 @@ class MemoryDB:
             if evidence and evidence not in ev:
                 ev.append(evidence)
             self._execute(
-                "UPDATE relations SET strength = ?, evidence = ?, last_reinforced = ? "
-                "WHERE id = ?",
+                "UPDATE relations SET strength = ?, evidence = ?, last_reinforced = ? WHERE id = ?",
                 (
                     new_strength,
                     json.dumps(ev[-10:], ensure_ascii=False),
@@ -507,9 +500,7 @@ class MemoryDB:
 
         await self._run(_op)
 
-    async def get_relations(
-        self, entity_id: str, *, limit: int = 20
-    ) -> list[dict]:
+    async def get_relations(self, entity_id: str, *, limit: int = 20) -> list[dict]:
         """取出与某人相关的全部关系（无论他/她是主语还是宾语）。"""
 
         def _op():
@@ -567,15 +558,12 @@ class MemoryDB:
 
         await self._run(_op)
 
-    async def messages_since(
-        self, umo: str, last_id: int, *, limit: int = 50
-    ) -> list[sqlite3.Row]:
+    async def messages_since(self, umo: str, last_id: int, *, limit: int = 50) -> list[sqlite3.Row]:
         """取出某会话在主键之后的消息（含 id，供推进游标）。"""
 
         def _op():
             rows = self._execute(
-                "SELECT * FROM messages WHERE umo = ? AND id > ? "
-                "ORDER BY id ASC LIMIT ?",
+                "SELECT * FROM messages WHERE umo = ? AND id > ? ORDER BY id ASC LIMIT ?",
                 (umo, last_id, max(1, limit)),
                 fetch="all",
             )
@@ -630,9 +618,7 @@ class MemoryDB:
 
         return await self._run(_op)
 
-    async def get_recent_events(
-        self, umo: str | None = None, *, limit: int = 10
-    ) -> list[dict]:
+    async def get_recent_events(self, umo: str | None = None, *, limit: int = 10) -> list[dict]:
         """按时间倒序取事件（可选按会话过滤），并附带参与者。"""
 
         def _op() -> list[dict]:
@@ -644,8 +630,7 @@ class MemoryDB:
                 )
             else:
                 rows = self._execute(
-                    "SELECT * FROM events WHERE umo_scope = ? "
-                    "ORDER BY occurred_at DESC LIMIT ?",
+                    "SELECT * FROM events WHERE umo_scope = ? ORDER BY occurred_at DESC LIMIT ?",
                     (umo, limit),
                     fetch="all",
                 )
@@ -682,9 +667,7 @@ class MemoryDB:
 
         return await self._run(_op)
 
-    async def get_events_for_entity(
-        self, entity_id: str, *, limit: int = 10
-    ) -> list[dict]:
+    async def get_events_for_entity(self, entity_id: str, *, limit: int = 10) -> list[dict]:
         """某个参与过的事件（用于「他经历过什么」）。"""
 
         def _op() -> list[dict]:
@@ -725,9 +708,7 @@ class MemoryDB:
     # ------------------------------------------------------------------
     async def distinct_sessions(self) -> list[str]:
         def _op():
-            rows = self._execute(
-                "SELECT DISTINCT umo FROM messages ORDER BY umo", fetch="all"
-            )
+            rows = self._execute("SELECT DISTINCT umo FROM messages ORDER BY umo", fetch="all")
             return [r["umo"] for r in (rows or [])]
 
         return await self._run(_op)

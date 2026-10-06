@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from dataclasses import dataclass
 from typing import Any
@@ -50,9 +51,7 @@ class ExtractionResult:
 class KnowledgeExtractor:
     """从聊天记录中抽取人物画像与关系。"""
 
-    def __init__(
-        self, *, db: Any, context: Any, config: Any
-    ) -> None:
+    def __init__(self, *, db: Any, context: Any, config: Any) -> None:
         self.db = db
         self.context = context
         self.config = config
@@ -78,10 +77,8 @@ class KnowledgeExtractor:
         self._running = False
         if self._task is not None:
             self._task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await self._task
-            except (asyncio.CancelledError, Exception):
-                pass
             self._task = None
 
     async def _loop(self) -> None:
@@ -106,9 +103,7 @@ class KnowledgeExtractor:
             try:
                 result = await self.maybe_extract(umo)
             except Exception as e:
-                logger.error(
-                    f"[ai_companion] {umo} 知识抽取失败: {e}", exc_info=True
-                )
+                logger.error(f"[ai_companion] {umo} 知识抽取失败: {e}", exc_info=True)
                 continue
             if result.people or result.relations or result.events:
                 done += 1
@@ -133,9 +128,7 @@ class KnowledgeExtractor:
             return ExtractionResult(reason="抽取失败（不推进游标）")
 
         latest_ts = max(float(r["created_at"]) for r in rows)
-        people, relations, events = await self._apply(
-            umo, data, name_map, occurred_at=latest_ts
-        )
+        people, relations, events = await self._apply(umo, data, name_map, occurred_at=latest_ts)
 
         # 推进游标：只消费到本批最后一条
         last_id = max(int(r["id"]) for r in rows)
@@ -249,7 +242,9 @@ class KnowledgeExtractor:
             await self.db.touch_entity(subj, a)
             await self.db.touch_entity(obj, b)
             await self.db.upsert_relation(
-                subj, predicate, obj,
+                subj,
+                predicate,
+                obj,
                 evidence=str(rel.get("evidence") or "")[:200],
             )
             saved_relations += 1
@@ -401,9 +396,7 @@ class KnowledgeExtractor:
         return entity_id
 
     # ------------------------------------------------------------------
-    async def note_from_speaker(
-        self, entity_id: str, display_name: str
-    ) -> None:
+    async def note_from_speaker(self, entity_id: str, display_name: str) -> None:
         """见到某人时说一声：维护实体与别名（画像内容交给抽取器）。"""
         if not entity_id:
             return

@@ -30,8 +30,7 @@ os.environ.setdefault("ASTRBOT_ROOT", tempfile.mkdtemp(prefix="aic-p4-"))
 def db(tmp_path):
     from astrbot_plugin_ai_companion.storage import MemoryDB
 
-    d = MemoryDB(db_path=tmp_path / "p4.db",
-                 schema_path=PLUGIN_DIR / "storage" / "schema.sql")
+    d = MemoryDB(db_path=tmp_path / "p4.db", schema_path=PLUGIN_DIR / "storage" / "schema.sql")
     return d
 
 
@@ -142,9 +141,7 @@ def _cfg(**over):
 def _extractor(db, provider, cfg=None):
     from astrbot_plugin_ai_companion.memory import KnowledgeExtractor
 
-    return KnowledgeExtractor(
-        db=db, context=FakeContext(provider), config=cfg or _cfg()
-    )
+    return KnowledgeExtractor(db=db, context=FakeContext(provider), config=cfg or _cfg())
 
 
 def test_extraction_below_threshold_is_noop(db):
@@ -152,8 +149,13 @@ def test_extraction_below_threshold_is_noop(db):
         await db.connect()
         provider = FakeProvider('{"people":[],"relations":[]}')
         ex = _extractor(db, provider)
-        await db.insert_message(umo="p:GroupMessage:1", role="user",
-                                content="只有一条", sender_id="u1", sender_name="小明")
+        await db.insert_message(
+            umo="p:GroupMessage:1",
+            role="user",
+            content="只有一条",
+            sender_id="u1",
+            sender_name="小明",
+        )
         result = await ex.maybe_extract("p:GroupMessage:1")
         assert result.people == 0 and result.relations == 0
         assert provider.calls == 0, "消息不足不应调用模型"
@@ -175,11 +177,14 @@ def test_extraction_saves_people_and_relations(db):
         ex = _extractor(db, provider)
 
         for i in range(3):
-            await db.insert_message(umo="p:GroupMessage:1", role="user",
-                                    content=f"第{i}条", sender_id="u1",
-                                    sender_name="小明")
-            await db.insert_message(umo="p:GroupMessage:1", role="assistant",
-                                    content=f"回复{i}")
+            await db.insert_message(
+                umo="p:GroupMessage:1",
+                role="user",
+                content=f"第{i}条",
+                sender_id="u1",
+                sender_name="小明",
+            )
+            await db.insert_message(umo="p:GroupMessage:1", role="assistant", content=f"回复{i}")
 
         result = await ex.maybe_extract("p:GroupMessage:1")
         assert result.people == 2 and result.relations == 1
@@ -202,9 +207,13 @@ def test_cursor_advances_only_on_success(db):
     async def scenario():
         await db.connect()
         for i in range(4):
-            await db.insert_message(umo="p:GroupMessage:1", role="user",
-                                    content=f"消息{i}", sender_id="u1",
-                                    sender_name="小明")
+            await db.insert_message(
+                umo="p:GroupMessage:1",
+                role="user",
+                content=f"消息{i}",
+                sender_id="u1",
+                sender_name="小明",
+            )
 
         # 第一次：模型返回垃圾 -> 不推进游标
         bad = _extractor(db, FakeProvider("这不是 JSON"))

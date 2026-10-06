@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .base import Decision, TurnContext, ReplyDecider, skip
+from .base import Decision, ReplyDecider, TurnContext, skip
 
 # 平台可能下发的空事件类型（与 GCP 的经验一致）
 _EMPTY_COMPONENT_TYPES = {"unknown"}

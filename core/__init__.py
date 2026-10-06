@@ -6,11 +6,11 @@ from .proactive import ProactiveScheduler, is_group_umo
 from .registry import SessionActor, SessionRegistry
 
 __all__ = [
-    "CompanionConfig",
     "MANAGED_KEY",
+    "RECORDED_KEY",
+    "CompanionConfig",
     "Orchestrator",
     "ProactiveScheduler",
-    "RECORDED_KEY",
     "SessionActor",
     "SessionRegistry",
     "TurnResult",

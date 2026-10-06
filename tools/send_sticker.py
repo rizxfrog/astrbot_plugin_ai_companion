@@ -22,7 +22,7 @@ if TYPE_CHECKING:  # pragma: no cover
 class SendStickerTool(FunctionTool):
     """给当前会话发送一张表情包。"""
 
-    stickers: "StickerLibrary | None" = None
+    stickers: StickerLibrary | None = None
     send_fn: Any = None
     """由插件注入的实际发送函数：async (umo, Image) -> bool。"""
 
@@ -68,7 +68,7 @@ class SendStickerTool(FunctionTool):
             from astrbot.core.message.components import Image
 
             image = Image.fromFileSystem(path)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.error(f"[ai_companion] 构造表情组件失败: {e}", exc_info=True)
             return json.dumps({"ok": False, "error": "表情构造失败"}, ensure_ascii=False)
 
@@ -77,7 +77,7 @@ class SendStickerTool(FunctionTool):
 
         try:
             ok = await self.send_fn(event.unified_msg_origin, image)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.error(f"[ai_companion] 发表情失败: {e}", exc_info=True)
             return json.dumps({"ok": False, "error": "发送失败"}, ensure_ascii=False)
 

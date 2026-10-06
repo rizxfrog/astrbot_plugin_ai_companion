@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from astrbot.api import FunctionTool, logger
 from astrbot.api.event import AstrMessageEvent
@@ -21,7 +21,7 @@ if TYPE_CHECKING:  # pragma: no cover
 class SearchHistoryTool(FunctionTool):
     """让 AI 检索历史聊天记录。"""
 
-    db: "MemoryDB | None" = None
+    db: MemoryDB | None = None
 
     name: str = "search_chat_history"
     description: str = (
@@ -65,7 +65,7 @@ class SearchHistoryTool(FunctionTool):
             rows = await self.db.search_messages(
                 query, umo=umo, limit=max(1, min(int(limit or 10), 50))
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.error(f"[ai_companion] 历史检索失败: {e}", exc_info=True)
             return json.dumps({"error": "检索失败"}, ensure_ascii=False)
 
@@ -80,9 +80,7 @@ class SearchHistoryTool(FunctionTool):
             }
             for row in rows
         ]
-        return json.dumps(
-            {"found": len(results), "results": results}, ensure_ascii=False
-        )
+        return json.dumps({"found": len(results), "results": results}, ensure_ascii=False)
 
 
 def _fmt_time(ts: float) -> str:

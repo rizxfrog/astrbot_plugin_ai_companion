@@ -40,8 +40,6 @@ class ContextAssembler:
             ).mark_as_temp()
             parts.append(part)
         if events_hint and TextPart is not None:
-            part = TextPart(
-                text=f"<最近发生的事>{events_hint}</最近发生的事>"
-            ).mark_as_temp()
+            part = TextPart(text=f"<最近发生的事>{events_hint}</最近发生的事>").mark_as_temp()
             parts.append(part)
         return parts

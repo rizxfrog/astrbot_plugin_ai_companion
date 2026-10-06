@@ -61,7 +61,6 @@ def test_plugin_module_imports():
 def test_render_chain_handles_component_type_enum():
     """回归：ComponentType 是 (str, Enum)，必须取 .value 才能正确渲染。"""
     from astrbot.core.message.components import At, Plain, Reply
-
     from astrbot_plugin_ai_companion.context import render_chain
 
     chain = [
@@ -77,10 +76,7 @@ def test_render_chain_handles_component_type_enum():
 def test_render_formats_sender_prefix():
     from astrbot_plugin_ai_companion.context import format_for_model
 
-    assert (
-        format_for_model(sender_name="小明", sender_id="u1", content="早")
-        == "小明(u1): 早"
-    )
+    assert format_for_model(sender_name="小明", sender_id="u1", content="早") == "小明(u1): 早"
     assert (
         format_for_model(sender_name="Bot", sender_id="bot1", content="早", is_bot=True)
         == "Bot(你)(bot1): 早"
@@ -95,15 +91,23 @@ def test_memory_write_and_recent(db):
     async def scenario():
         await db.connect()
         await db.insert_message(
-            umo="p:GroupMessage:1", role="user", content="今天天气真好，我们去公园散步吧",
-            sender_id="u1", sender_name="小明",
+            umo="p:GroupMessage:1",
+            role="user",
+            content="今天天气真好，我们去公园散步吧",
+            sender_id="u1",
+            sender_name="小明",
         )
         await db.insert_message(
-            umo="p:GroupMessage:1", role="assistant", content="好呀，几点出发？",
+            umo="p:GroupMessage:1",
+            role="assistant",
+            content="好呀，几点出发？",
         )
         await db.insert_message(
-            umo="p:GroupMessage:2", role="user", content="另一个群的消息",
-            sender_id="u2", sender_name="小红",
+            umo="p:GroupMessage:2",
+            role="user",
+            content="另一个群的消息",
+            sender_id="u2",
+            sender_name="小红",
         )
 
         recent = await db.recent_messages("p:GroupMessage:1", limit=10)
@@ -125,9 +129,11 @@ def test_memory_search_cjk_and_fallback(db):
     async def scenario():
         await db.connect()
         await db.insert_message(
-            umo="p:GroupMessage:1", role="user",
+            umo="p:GroupMessage:1",
+            role="user",
             content="周末一起去爬山吧，山顶的景色很好",
-            sender_id="u1", sender_name="小明",
+            sender_id="u1",
+            sender_name="小明",
         )
 
         # 2 字查询：trigram 无法命中，必须回退 LIKE
@@ -169,9 +175,16 @@ def test_decision_chain_short_circuits():
     cfg = CompanionConfig({"reply_probability": 0.0})  # 概率层会否决
 
     ctx = TurnContext(
-        event=FakeEvent(), umo="p:GroupMessage:1", actor=SessionActor(umo="x"),
-        config=cfg, is_private=False, is_mention=True, is_command=False,
-        message_text="你好", sender_id="u1", sender_name="小明",
+        event=FakeEvent(),
+        umo="p:GroupMessage:1",
+        actor=SessionActor(umo="x"),
+        config=cfg,
+        is_private=False,
+        is_mention=True,
+        is_command=False,
+        message_text="你好",
+        sender_id="u1",
+        sender_name="小明",
     )
     chain = DecisionChain(
         [HardFilterDecider(), RuleDecider(), RateLimitDecider(), ProbabilityDecider()]
@@ -182,9 +195,16 @@ def test_decision_chain_short_circuits():
 
     # 未被点名的群消息：规则层弃权 -> 概率 0 否决
     ctx2 = TurnContext(
-        event=FakeEvent(), umo="p:GroupMessage:1", actor=SessionActor(umo="x"),
-        config=cfg, is_private=False, is_mention=False, is_command=False,
-        message_text="随便说一句", sender_id="u1", sender_name="小明",
+        event=FakeEvent(),
+        umo="p:GroupMessage:1",
+        actor=SessionActor(umo="x"),
+        config=cfg,
+        is_private=False,
+        is_mention=False,
+        is_command=False,
+        message_text="随便说一句",
+        sender_id="u1",
+        sender_name="小明",
     )
     decision2 = _run(chain.decide(ctx2))
     assert decision2.should_reply is False
@@ -192,9 +212,16 @@ def test_decision_chain_short_circuits():
 
     # 空消息被硬过滤拦下
     ctx3 = TurnContext(
-        event=FakeEvent(), umo="p:GroupMessage:1", actor=SessionActor(umo="x"),
-        config=cfg, is_private=False, is_mention=True, is_command=False,
-        message_text="", sender_id="u1", sender_name="小明",
+        event=FakeEvent(),
+        umo="p:GroupMessage:1",
+        actor=SessionActor(umo="x"),
+        config=cfg,
+        is_private=False,
+        is_mention=True,
+        is_command=False,
+        message_text="",
+        sender_id="u1",
+        sender_name="小明",
     )
     decision3 = _run(chain.decide(ctx3))
     assert decision3.should_reply is False
@@ -233,48 +260,78 @@ def test_probability_gate_controls_model_calls():
 
     def make_ctx(p):
         return TurnContext(
-            event=FakeEvent(), umo="p:GroupMessage:1", actor=SessionActor(umo="x"),
+            event=FakeEvent(),
+            umo="p:GroupMessage:1",
+            actor=SessionActor(umo="x"),
             config=CompanionConfig({"reply_probability": p}),
-            is_private=False, is_mention=False, is_command=False,
-            message_text="有人吗", sender_id="u1", sender_name="小明",
+            is_private=False,
+            is_mention=False,
+            is_command=False,
+            message_text="有人吗",
+            sender_id="u1",
+            sender_name="小明",
         )
 
     # 命中门槛（roll=0 < 0.5）-> 交给读空气，由它说「想接」-> 回复
     judge_yes = FakeJudge({"reply": True, "reason": "被问到了"})
-    d = _run(DecisionChain([
-        HardFilterDecider(), RuleDecider(), RateLimitDecider(),
-        ProbabilityDecider(rng=_AlwaysZeroRng(), rate=lambda c: 0.5, defer_on_fail=True),
-        LLMJudgeDecider(judge_yes),
-    ]).decide(make_ctx(0.5)))
+    d = _run(
+        DecisionChain(
+            [
+                HardFilterDecider(),
+                RuleDecider(),
+                RateLimitDecider(),
+                ProbabilityDecider(rng=_AlwaysZeroRng(), rate=lambda c: 0.5, defer_on_fail=True),
+                LLMJudgeDecider(judge_yes),
+            ]
+        ).decide(make_ctx(0.5))
+    )
     assert d.should_reply is True and d.decider == "llm_judge", d
     assert judge_yes.calls == 1, "命中门槛后必须调用读空气"
 
     # 读空气说「不想接」-> 不回复
     judge_no = FakeJudge({"reply": False, "reason": "插不上话"})
-    d2 = _run(DecisionChain([
-        HardFilterDecider(), RuleDecider(), RateLimitDecider(),
-        ProbabilityDecider(rng=_AlwaysZeroRng(), rate=lambda c: 0.5, defer_on_fail=True),
-        LLMJudgeDecider(judge_no),
-    ]).decide(make_ctx(0.5)))
+    d2 = _run(
+        DecisionChain(
+            [
+                HardFilterDecider(),
+                RuleDecider(),
+                RateLimitDecider(),
+                ProbabilityDecider(rng=_AlwaysZeroRng(), rate=lambda c: 0.5, defer_on_fail=True),
+                LLMJudgeDecider(judge_no),
+            ]
+        ).decide(make_ctx(0.5))
+    )
     assert d2.should_reply is False and d2.decider == "llm_judge", d2
 
     # 未命中门槛（roll=0.99 >= 0.5）-> 代码直接判不回，**不调用模型**
     judge_unused = FakeJudge({"reply": True})
-    d3 = _run(DecisionChain([
-        HardFilterDecider(), RuleDecider(), RateLimitDecider(),
-        ProbabilityDecider(rng=_AlwaysHighRng(), rate=lambda c: 0.5, defer_on_fail=True),
-        LLMJudgeDecider(judge_unused),
-    ]).decide(make_ctx(0.5)))
+    d3 = _run(
+        DecisionChain(
+            [
+                HardFilterDecider(),
+                RuleDecider(),
+                RateLimitDecider(),
+                ProbabilityDecider(rng=_AlwaysHighRng(), rate=lambda c: 0.5, defer_on_fail=True),
+                LLMJudgeDecider(judge_unused),
+            ]
+        ).decide(make_ctx(0.5))
+    )
     assert d3.decider == "probability" and d3.should_reply is False, d3
     assert judge_unused.calls == 0, "未命中门槛不得调用模型（省钱的关键）"
 
     # 概率为 0 -> 连门槛都不进，同样不调用模型
     judge_zero = FakeJudge({"reply": True})
-    d4 = _run(DecisionChain([
-        HardFilterDecider(), RuleDecider(), RateLimitDecider(),
-        ProbabilityDecider(rng=_AlwaysZeroRng(), rate=lambda c: 0.0, defer_on_fail=True),
-        LLMJudgeDecider(judge_zero),
-    ]).decide(make_ctx(0.0)))
+    d4 = _run(
+        DecisionChain(
+            [
+                HardFilterDecider(),
+                RuleDecider(),
+                RateLimitDecider(),
+                ProbabilityDecider(rng=_AlwaysZeroRng(), rate=lambda c: 0.0, defer_on_fail=True),
+                LLMJudgeDecider(judge_zero),
+            ]
+        ).decide(make_ctx(0.0))
+    )
     assert d4.should_reply is False and d4.decider == "probability", d4
     assert judge_zero.calls == 0
 
@@ -293,9 +350,16 @@ def test_group_probability_differs_from_default():
 
     def mk(is_private, is_mention):
         return TurnContext(
-            event=FakeEvent(), umo="p:GroupMessage:1", actor=SessionActor(umo="x"),
-            config=cfg, is_private=is_private, is_mention=is_mention,
-            is_command=False, message_text="hi", sender_id="u1", sender_name="小明",
+            event=FakeEvent(),
+            umo="p:GroupMessage:1",
+            actor=SessionActor(umo="x"),
+            config=cfg,
+            is_private=is_private,
+            is_mention=is_mention,
+            is_command=False,
+            message_text="hi",
+            sender_id="u1",
+            sender_name="小明",
         )
 
     def gate_rate(ctx):
@@ -574,8 +638,8 @@ def test_sticker_limiter_cooldown_is_per_session():
 
     # 被概率拦下的不应推进冷却窗口
     lim2 = StickerRateLimiter(drop_rate=0.0, cooldown_seconds=60)
-    lim2.allow("x", now=1000.0)          # 被拦
-    assert lim2.allow("x", now=1000.0)[0] is False   # 仍无冷却负担
+    lim2.allow("x", now=1000.0)  # 被拦
+    assert lim2.allow("x", now=1000.0)[0] is False  # 仍无冷却负担
 
 
 def test_humanizer_marker_path_respects_limiter():
@@ -591,7 +655,7 @@ def test_humanizer_marker_path_respects_limiter():
 
     class Cfg:
         enable_stickers = True
-        sticker_auto_probability = 0.0     # 关掉自动补图，只看标记路径
+        sticker_auto_probability = 0.0  # 关掉自动补图，只看标记路径
         enable_typos = False
 
     lib = StickerLibrary(roots=[PLUGIN_DIR / "stickers"])
@@ -673,7 +737,7 @@ def test_dangling_image_placeholder_stripped_on_event_path():
     from astrbot_plugin_ai_companion.humanize import Humanizer, StickerLibrary
 
     class Cfg:
-        enable_stickers = False       # 关掉表情，确保不插图
+        enable_stickers = False  # 关掉表情，确保不插图
         sticker_auto_probability = 0.0
         enable_typos = False
 
@@ -714,14 +778,20 @@ def _bare_orchestrator(debounce_private=0.3, debounce_group=0.15):
     from astrbot_plugin_ai_companion.core import CompanionConfig
     from astrbot_plugin_ai_companion.core.orchestrator import Orchestrator
 
-    cfg = CompanionConfig({
-        "enable_debounce": True,
-        "debounce_private_seconds": debounce_private,
-        "debounce_group_seconds": debounce_group,
-    })
+    cfg = CompanionConfig(
+        {
+            "enable_debounce": True,
+            "debounce_private_seconds": debounce_private,
+            "debounce_group_seconds": debounce_group,
+        }
+    )
     return Orchestrator(
-        config=cfg, registry=None, chain=None, db=None,
-        assembler=None, conversation_manager=None,
+        config=cfg,
+        registry=None,
+        chain=None,
+        db=None,
+        assembler=None,
+        conversation_manager=None,
     )
 
 
@@ -767,8 +837,9 @@ def test_debounce_merges_burst_into_one_turn():
     assert len(settlers) == 1, "只允许一条消息负责结算（否则会重复回答）"
     assert len(yielders) == 2, "其余两条应让出"
     lines, _ok, _imgs = settlers[0]
-    assert [l[2] for l in lines] == ["第一句", "第二句", "第三句"], \
+    assert [l[2] for l in lines] == ["第一句", "第二句", "第三句"], (
         f"应合并全部三条且保持顺序，实际 {[l[2] for l in lines]}"
+    )
 
 
 def test_debounce_separate_sessions_do_not_interfere():
@@ -778,9 +849,7 @@ def test_debounce_separate_sessions_do_not_interfere():
         o = _bare_orchestrator(debounce_private=0.15)
 
         async def send(umo, text):
-            return await o._wait_quiet(
-                umo, ("甲", "1", text), o._debounce_seconds(is_private=True)
-            )
+            return await o._wait_quiet(umo, ("甲", "1", text), o._debounce_seconds(is_private=True))
 
         return await asyncio.gather(send("a:1", "A"), send("b:1", "B"))
 
@@ -796,8 +865,12 @@ def test_debounce_disabled_returns_immediately():
 
     cfg = CompanionConfig({"enable_debounce": False, "debounce_private_seconds": 5})
     o = Orchestrator(
-        config=cfg, registry=None, chain=None, db=None,
-        assembler=None, conversation_manager=None,
+        config=cfg,
+        registry=None,
+        chain=None,
+        db=None,
+        assembler=None,
+        conversation_manager=None,
     )
     assert o._debounce_seconds(is_private=True) == 0.0
     assert o._debounce_seconds(is_private=False) == 0.0
@@ -808,13 +881,19 @@ def test_debounce_config_separates_group_and_private():
     from astrbot_plugin_ai_companion.core import CompanionConfig
     from astrbot_plugin_ai_companion.core.orchestrator import Orchestrator
 
-    cfg = CompanionConfig({
-        "debounce_group_seconds": 3,
-        "debounce_private_seconds": 5,
-    })
+    cfg = CompanionConfig(
+        {
+            "debounce_group_seconds": 3,
+            "debounce_private_seconds": 5,
+        }
+    )
     o = Orchestrator(
-        config=cfg, registry=None, chain=None, db=None,
-        assembler=None, conversation_manager=None,
+        config=cfg,
+        registry=None,
+        chain=None,
+        db=None,
+        assembler=None,
+        conversation_manager=None,
     )
     assert o._debounce_seconds(is_private=True) == 5.0
     assert o._debounce_seconds(is_private=False) == 3.0
@@ -822,8 +901,12 @@ def test_debounce_config_separates_group_and_private():
     # 默认值
     d = CompanionConfig({})
     od = Orchestrator(
-        config=d, registry=None, chain=None, db=None,
-        assembler=None, conversation_manager=None,
+        config=d,
+        registry=None,
+        chain=None,
+        db=None,
+        assembler=None,
+        conversation_manager=None,
     )
     assert od._debounce_seconds(is_private=True) == 5.0
     assert od._debounce_seconds(is_private=False) == 3.0
@@ -836,9 +919,7 @@ def test_merge_prompt_marks_burst():
     one = Orchestrator._merge_prompt([("小明", "1", "你好")])
     assert "你好" in one and one.count("\n") == 0
 
-    many = Orchestrator._merge_prompt(
-        [("小明", "1", "第一句"), ("小明", "1", "你是谁")]
-    )
+    many = Orchestrator._merge_prompt([("小明", "1", "第一句"), ("小明", "1", "你是谁")])
     assert "第一句" in many and "你是谁" in many
     assert "只回应一次" in many
 
@@ -849,7 +930,6 @@ def test_debounce_boundary_race_only_one_settles():
     若结算前不二次确认归属，旧的一轮会在刚被顶替的瞬间返回消息串，
     与新的那一轮各自结算，造成重复回答 —— 这正是本次要修的症状。
     """
-    import random as _r
 
     async def run():
         o = _bare_orchestrator(debounce_private=0.1)
@@ -864,15 +944,12 @@ def test_debounce_boundary_race_only_one_settles():
             results.append((text, r[1], r[0]))
 
         # 并发到达，且刻意让部分消息的到达时刻落在前一条窗口到期点上
-        await asyncio.gather(*[
-            send(f"msg@{d}", d) for d in (0.0, 0.05, 0.10, 0.15, 0.20)
-        ])
+        await asyncio.gather(*[send(f"msg@{d}", d) for d in (0.0, 0.05, 0.10, 0.15, 0.20)])
         return results
 
     res = _run(run())
     settlers = [r for r in res if r[1]]
-    assert len(settlers) == 1, \
-        f"必须恰好一条结算，实际 {len(settlers)}: {[r[0] for r in settlers]}"
+    assert len(settlers) == 1, f"必须恰好一条结算，实际 {len(settlers)}: {[r[0] for r in settlers]}"
 
 
 # ======================================================================
@@ -897,7 +974,7 @@ def test_tool_call_xml_stripped_from_reply():
         "又来了是吧😂 你这表情包在我这就没现过身，全是空白\n\n"
         '<invoke name="send_sticker">\n'
         '<parameter name="category">无语</parameter>\n'
-        '</invoke>'
+        "</invoke>"
     )
 
     class Res:
@@ -923,7 +1000,7 @@ def test_tool_call_xml_stripped_from_reply():
     for variant in (
         '<antml:invoke name="send_sticker"><antml:parameter name="c">x</antml:parameter></antml:invoke>',
         '文字 <invoke name="x"> 尾巴',
-        '</invoke>',
+        "</invoke>",
     ):
         ev2 = Ev(variant)
         h.apply(ev2)
@@ -974,17 +1051,22 @@ def test_image_components_collected_for_model():
             self.message_obj = type("O", (), {"message": comps})()
 
     o = Orchestrator(
-        config=None, registry=None, chain=None, db=None,
-        assembler=None, conversation_manager=None,
+        config=None,
+        registry=None,
+        chain=None,
+        db=None,
+        assembler=None,
+        conversation_manager=None,
     )
 
     img1, img2 = FakeImage("/tmp/a.png"), FakeImage("/tmp/b.png")
     ev = MockEvent([FakePlain(), img1, img2])
 
     import astrbot.core.message.components as comps
+
     orig = comps.Image
     try:
-        comps.Image = FakeImage          # 让 isinstance 判定为图片
+        comps.Image = FakeImage  # 让 isinstance 判定为图片
         paths = _run(o._collect_image_paths(ev))
     finally:
         comps.Image = orig
@@ -1013,15 +1095,21 @@ def test_image_collection_survives_failure():
         debug_mode = False
 
     o = Orchestrator(
-        config=_Cfg(), registry=None, chain=None, db=None,
-        assembler=None, conversation_manager=None,
+        config=_Cfg(),
+        registry=None,
+        chain=None,
+        db=None,
+        assembler=None,
+        conversation_manager=None,
     )
 
     import astrbot.core.message.components as comps
+
     orig = comps.Image
 
     class Both(BadImage, GoodImage):
         pass
+
     try:
         comps.Image = (BadImage, GoodImage)
         paths = _run(o._collect_image_paths(MockEvent([BadImage(), GoodImage()])))
@@ -1036,19 +1124,16 @@ def test_burst_keeps_images_from_earlier_messages():
     私聊窗口 5 秒会把这两条合并成一轮；若只从**最后一条**事件取图片，
     先到的图就丢了 —— 表现正是「我只显示个图片标记，具体啥样瞅不见」。
     """
+
     async def run():
         o = _bare_orchestrator(debounce_private=0.2)
 
         async def with_image():
-            return await o._wait_quiet(
-                "u:1", ("小明", "1", ""), 0.2, images=["/tmp/photo.png"]
-            )
+            return await o._wait_quiet("u:1", ("小明", "1", ""), 0.2, images=["/tmp/photo.png"])
 
         async def text_only():
             await asyncio.sleep(0.08)
-            return await o._wait_quiet(
-                "u:1", ("小明", "1", "这是什么表情包"), 0.2, images=[]
-            )
+            return await o._wait_quiet("u:1", ("小明", "1", "这是什么表情包"), 0.2, images=[])
 
         return await asyncio.gather(with_image(), text_only())
 
@@ -1056,27 +1141,24 @@ def test_burst_keeps_images_from_earlier_messages():
     settlers = [r for r in results if r[1]]
     assert len(settlers) == 1, "应只有一条结算"
     lines, _ok, images = settlers[0]
-    assert images == ["/tmp/photo.png"], (
-        f"图片必须随合并保留，实际 {images}"
-    )
+    assert images == ["/tmp/photo.png"], f"图片必须随合并保留，实际 {images}"
     assert [l[2] for l in lines] == ["", "这是什么表情包"], "文本也都要在"
 
 
 def test_burst_merges_images_from_multiple_messages():
     """多条消息各带图片时全部合并，且不重复。"""
+
     async def run():
         o = _bare_orchestrator(debounce_private=0.15)
 
         async def send(imgs, delay):
             await asyncio.sleep(delay)
-            return await o._wait_quiet(
-                "u:1", ("甲", "1", "看图"), 0.15, images=imgs
-            )
+            return await o._wait_quiet("u:1", ("甲", "1", "看图"), 0.15, images=imgs)
 
         return await asyncio.gather(
             send(["/a.png"], 0.0),
             send(["/b.png"], 0.05),
-            send(["/a.png"], 0.09),   # 重复项
+            send(["/a.png"], 0.09),  # 重复项
         )
 
     res = _run(run())

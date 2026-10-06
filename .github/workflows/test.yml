@@ -1,0 +1,73 @@
+name: 🧪 测试与检查
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: 单元测试 (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 插件声明 astrbot >= 4.24.0；astrbot 自身要求 Python >= 3.12
+        python-version: [ "3.12", "3.13" ]
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 设置 Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: 安装依赖
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          # 测试需要 import astrbot.*（平台 API），从 PyPI 安装
+          pip install astrbot
+          pip install -r requirements-dev.txt
+
+      - name: 确认 astrbot 可导入
+        run: python -c "import astrbot; print('astrbot', getattr(astrbot, '__version__', 'unknown'))"
+
+      - name: 运行测试
+        env:
+          # 让 StarTools.get_data_dir 落在临时目录，不污染工作区
+          ASTRBOT_ROOT: ${{ runner.temp }}/astrbot-ci
+          PYTHONPATH: ${{ github.workspace }}/..
+        run: |
+          set -euo pipefail
+          mkdir -p "$ASTRBOT_ROOT"
+          python -m pytest tests/ -v
+
+  lint:
+    name: 代码风格 (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 设置 Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: 安装 ruff
+        run: pip install ruff
+
+      - name: 检查
+        run: |
+          set -euo pipefail
+          ruff check .
+          ruff format --check .

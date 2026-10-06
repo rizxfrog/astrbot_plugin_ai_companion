@@ -14,8 +14,6 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
-
 PLUGIN_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PLUGIN_DIR.parent))
 
@@ -91,10 +89,13 @@ def _make(conv, provider=None, cfg=None):
     conv_mgr = FakeConvMgr(conv)
     return (
         Compactor(
-            conversation_manager=conv_mgr, db=None,
-            context=FakeContext(provider), config=cfg or _cfg(),
+            conversation_manager=conv_mgr,
+            db=None,
+            context=FakeContext(provider),
+            config=cfg or _cfg(),
         ),
-        conv_mgr, provider,
+        conv_mgr,
+        provider,
     )
 
 
@@ -162,7 +163,8 @@ def test_rolling_summary_merges_previous():
     assert "这是一段摘要" in prompt or "合并后的新摘要" in prompt
     written = conv_mgr.last_written
     summaries = [
-        m for m in written
+        m
+        for m in written
         if isinstance(m.get("content"), str) and m["content"].startswith("[[ai_companion_summary]]")
     ]
     assert len(summaries) == 1, "任何时刻只应存在一条摘要"

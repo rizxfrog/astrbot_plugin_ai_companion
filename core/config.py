@@ -69,17 +69,11 @@ class CompanionConfig:
         )
         # -1 表示「沿用 reply_probability」
         _group_p = _as_float(self.raw.get("group_reply_probability"), -1.0)
-        self.group_reply_probability = (
-            -1.0 if _group_p < 0 else max(0.0, min(1.0, _group_p))
-        )
+        self.group_reply_probability = -1.0 if _group_p < 0 else max(0.0, min(1.0, _group_p))
         self.enable_llm_judge = _as_bool(self.raw.get("enable_llm_judge"), True)
         self.judge_provider_id = _as_str(self.raw.get("judge_provider_id"), "")
-        self.judge_timeout_seconds = max(
-            1, _as_int(self.raw.get("judge_timeout_seconds"), 15)
-        )
-        self.ignore_command_messages = _as_bool(
-            self.raw.get("ignore_command_messages"), True
-        )
+        self.judge_timeout_seconds = max(1, _as_int(self.raw.get("judge_timeout_seconds"), 15))
+        self.ignore_command_messages = _as_bool(self.raw.get("ignore_command_messages"), True)
         self.min_reply_interval_seconds = max(
             0, _as_int(self.raw.get("min_reply_interval_seconds"), 3)
         )
@@ -96,15 +90,9 @@ class CompanionConfig:
         )
         self.record_all_messages = _as_bool(self.raw.get("record_all_messages"), True)
         self.enable_compact = _as_bool(self.raw.get("enable_compact"), True)
-        self.compact_trigger_turns = max(
-            4, _as_int(self.raw.get("compact_trigger_turns"), 60)
-        )
-        self.compact_keep_recent = max(
-            0, _as_int(self.raw.get("compact_keep_recent"), 20)
-        )
-        self.compact_min_dropped = max(
-            1, _as_int(self.raw.get("compact_min_dropped"), 10)
-        )
+        self.compact_trigger_turns = max(4, _as_int(self.raw.get("compact_trigger_turns"), 60))
+        self.compact_keep_recent = max(0, _as_int(self.raw.get("compact_keep_recent"), 20))
+        self.compact_min_dropped = max(1, _as_int(self.raw.get("compact_min_dropped"), 10))
         self.compact_provider_id = _as_str(self.raw.get("compact_provider_id"), "")
         # --- 主动消息 ---
         self.enable_proactive = _as_bool(self.raw.get("enable_proactive"), False)
@@ -117,41 +105,25 @@ class CompanionConfig:
         self.proactive_check_interval_seconds = max(
             5, _as_int(self.raw.get("proactive_check_interval_seconds"), 60)
         )
-        self.proactive_max_unanswered = max(
-            0, _as_int(self.raw.get("proactive_max_unanswered"), 2)
-        )
+        self.proactive_max_unanswered = max(0, _as_int(self.raw.get("proactive_max_unanswered"), 2))
         self.proactive_cooldown_minutes = max(
             0, _as_int(self.raw.get("proactive_cooldown_minutes"), 240)
         )
-        self.proactive_history_turns = max(
-            0, _as_int(self.raw.get("proactive_history_turns"), 10)
-        )
-        self.proactive_provider_id = _as_str(
-            self.raw.get("proactive_provider_id"), ""
-        )
+        self.proactive_history_turns = max(0, _as_int(self.raw.get("proactive_history_turns"), 10))
+        self.proactive_provider_id = _as_str(self.raw.get("proactive_provider_id"), "")
         self.proactive_prompt = _as_str(self.raw.get("proactive_prompt"), "")
         # --- 人物与关系 ---
         self.enable_knowledge_extraction = _as_bool(
             self.raw.get("enable_knowledge_extraction"), True
         )
-        self.extraction_provider_id = _as_str(
-            self.raw.get("extraction_provider_id"), ""
-        )
+        self.extraction_provider_id = _as_str(self.raw.get("extraction_provider_id"), "")
         self.extraction_interval_minutes = max(
             1, _as_int(self.raw.get("extraction_interval_minutes"), 30)
         )
-        self.extraction_min_messages = max(
-            1, _as_int(self.raw.get("extraction_min_messages"), 8)
-        )
-        self.extraction_batch_size = max(
-            5, _as_int(self.raw.get("extraction_batch_size"), 40)
-        )
-        self.inject_people_context = _as_bool(
-            self.raw.get("inject_people_context"), True
-        )
-        self.inject_events_context = _as_bool(
-            self.raw.get("inject_events_context"), True
-        )
+        self.extraction_min_messages = max(1, _as_int(self.raw.get("extraction_min_messages"), 8))
+        self.extraction_batch_size = max(5, _as_int(self.raw.get("extraction_batch_size"), 40))
+        self.inject_people_context = _as_bool(self.raw.get("inject_people_context"), True)
+        self.inject_events_context = _as_bool(self.raw.get("inject_events_context"), True)
         # --- 拟人增强 ---
         self.enable_stickers = _as_bool(self.raw.get("enable_stickers"), True)
         self.sticker_auto_probability = max(
@@ -161,9 +133,7 @@ class CompanionConfig:
         self.sticker_send_probability = max(
             0.0, min(1.0, _as_float(self.raw.get("sticker_send_probability"), 0.2))
         )
-        self.sticker_cooldown_seconds = max(
-            0, _as_int(self.raw.get("sticker_cooldown_seconds"), 0)
-        )
+        self.sticker_cooldown_seconds = max(0, _as_int(self.raw.get("sticker_cooldown_seconds"), 0))
         self.enable_typos = _as_bool(self.raw.get("enable_typos"), False)
         self.typo_probability = max(
             0.0, min(1.0, _as_float(self.raw.get("typo_probability"), 0.03))
@@ -175,17 +145,14 @@ class CompanionConfig:
         self.enable_persona = _as_bool(self.raw.get("enable_persona"), True)
         # 空字符串表示「用内置人格」，而不是「不用人格」
         self.persona_prompt = (
-            _as_str(self.raw.get("persona_prompt"), "").strip()
-            or DEFAULT_PERSONA_PROMPT
+            _as_str(self.raw.get("persona_prompt"), "").strip() or DEFAULT_PERSONA_PROMPT
         )
         self.identity_conceal = _as_bool(self.raw.get("identity_conceal"), True)
         self.identity_deflect_private = _as_str_list(
             self.raw.get("identity_deflect_private")
         ) or list(DEFAULT_DEFLECT_PRIVATE)
         # 群聊默认空列表 = 直接无视
-        self.identity_deflect_group = _as_str_list(
-            self.raw.get("identity_deflect_group")
-        )
+        self.identity_deflect_group = _as_str_list(self.raw.get("identity_deflect_group"))
 
     def enabled_for(self, *, is_private: bool) -> bool:
         if not self.enable:

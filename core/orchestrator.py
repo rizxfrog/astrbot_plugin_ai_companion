@@ -49,7 +49,7 @@ class TurnResult:
 class _Burst:
     """一次「连发」的累积状态。"""
 
-    token: object          # 最新一条消息的身份标记
+    token: object  # 最新一条消息的身份标记
     lines: list[tuple[str, str, str]] = field(default_factory=list)
     images: list[str] = field(default_factory=list)
 
@@ -90,11 +90,7 @@ class Orchestrator:
         cfg = self.config
         if not getattr(cfg, "enable_debounce", True):
             return 0.0
-        raw = (
-            cfg.debounce_private_seconds
-            if is_private
-            else cfg.debounce_group_seconds
-        )
+        raw = cfg.debounce_private_seconds if is_private else cfg.debounce_group_seconds
         try:
             return max(0.0, float(raw))
         except (TypeError, ValueError):
@@ -103,11 +99,11 @@ class Orchestrator:
     async def _wait_quiet(
         self,
         umo: str,
-        line: "tuple[str, str, str]",
+        line: tuple[str, str, str],
         wait_seconds: float,
         *,
-        images: "list[str] | None" = None,
-    ) -> "tuple[list[tuple[str, str, str]], bool, list[str]]":
+        images: list[str] | None = None,
+    ) -> tuple[list[tuple[str, str, str]], bool, list[str]]:
         """等这个会话安静下来，再返回累积的消息串。
 
         语义是「用户停手若干秒后才决策」：收到消息起等 ``wait_seconds``，期间
@@ -133,19 +129,13 @@ class Orchestrator:
         # 图片同样要继承 —— 用户常常「先发图，再发一句话说明」，
         # 若只取最后一条事件的图片，先到的图就被丢了。
         existing = self._bursts.get(umo)
-        lines: list[tuple[str, str, str]] = (
-            list(existing.lines) if existing is not None else []
-        )
-        merged_images: list[str] = (
-            list(existing.images) if existing is not None else []
-        )
+        lines: list[tuple[str, str, str]] = list(existing.lines) if existing is not None else []
+        merged_images: list[str] = list(existing.images) if existing is not None else []
         lines.append(line)
         for path in images or []:
             if path not in merged_images:
                 merged_images.append(path)
-        self._bursts[umo] = _Burst(
-            token=token, lines=lines, images=merged_images
-        )
+        self._bursts[umo] = _Burst(token=token, lines=lines, images=merged_images)
 
         deadline = time.monotonic() + wait_seconds
         while True:
@@ -216,18 +206,13 @@ class Orchestrator:
             return "[空消息]"
         if len(lines) == 1:
             name, sid, content = lines[0]
-            return format_for_model(
-                sender_name=name, sender_id=sid, content=content
-            ) or "[空消息]"
+            return format_for_model(sender_name=name, sender_id=sid, content=content) or "[空消息]"
         # 多条：逐行渲染，让模型明确「这是同一个人连发的几条」
         rendered = []
         for name, sid, content in lines:
-            rendered.append(
-                format_for_model(sender_name=name, sender_id=sid, content=content)
-            )
-        return (
-            "(对方刚才连着发了几条消息，请合并理解为一次发言、只回应一次)\n"
-            + "\n".join(rendered)
+            rendered.append(format_for_model(sender_name=name, sender_id=sid, content=content))
+        return "(对方刚才连着发了几条消息，请合并理解为一次发言、只回应一次)\n" + "\n".join(
+            rendered
         )
 
     # ------------------------------------------------------------------
@@ -252,8 +237,11 @@ class Orchestrator:
 
         if cfg.record_all_messages:
             await self._record_user(
-                umo=umo, event=event, sender_id=sender_id,
-                sender_name=sender_name, text=text,
+                umo=umo,
+                event=event,
+                sender_id=sender_id,
+                sender_name=sender_name,
+                text=text,
             )
 
         # 见到这个人就登记一下（画像内容由抽取器定期总结）
@@ -270,9 +258,7 @@ class Orchestrator:
         # 指令消息不等待：用户敲 /help 就期望立刻有反应。
         owner_event = event
         is_command = self._is_command(event)
-        wait_seconds = (
-            0.0 if is_command else self._debounce_seconds(is_private=is_private)
-        )
+        wait_seconds = 0.0 if is_command else self._debounce_seconds(is_private=is_private)
         merged_images: list[str] = []
         if wait_seconds > 0:
             # 先收集本条消息的图片，再进入等待：等待可能把这条合并掉，
@@ -288,9 +274,7 @@ class Orchestrator:
                 # 已被后续消息合并：本轮不作决策，但**必须**阻止平台默认链路，
                 # 否则未被决策的消息会由平台自己的 Agent 直接回掉。
                 self._block_default_llm(event)
-                return TurnResult(
-                    handled=True, should_reply=False, reason="已合并到后续消息"
-                )
+                return TurnResult(handled=True, should_reply=False, reason="已合并到后续消息")
             # 用整串消息作为本轮输入
             text = self._merge_prompt(lines)
             merged_images = burst_images
@@ -336,14 +320,8 @@ class Orchestrator:
             conversation=conversation,
             image_urls=image_urls,
             extra_parts=self.assembler.build_extra_parts(cfg),
-            people_hint=(
-                await self._people_hint(sender_id)
-                if cfg.inject_people_context
-                else ""
-            ),
-            events_hint=(
-                await self._events_hint(umo) if cfg.inject_events_context else ""
-            ),
+            people_hint=(await self._people_hint(sender_id) if cfg.inject_people_context else ""),
+            events_hint=(await self._events_hint(umo) if cfg.inject_events_context else ""),
         )
 
     async def _maybe_compact(self, umo: str, conversation: Any) -> Any:
@@ -403,9 +381,7 @@ class Orchestrator:
             parts.append("、".join(str(t) for t in traits[:5]))
         if profile.get("style"):
             parts.append(str(profile["style"]))
-        rels = [
-            f"{r['relation']}{r['with']}" for r in (info.get("relations") or [])[:5]
-        ]
+        rels = [f"{r['relation']}{r['with']}" for r in (info.get("relations") or [])[:5]]
         line = f"{info.get('name') or '此人'}"
         if parts:
             line += "：" + "；".join(parts)
@@ -470,9 +446,7 @@ class Orchestrator:
                 prov = context.get_provider_by_id(pid)
                 if prov is not None:
                     return prov
-                logger.warning(
-                    f"[ai_companion] 配置的读空气模型 {pid} 不存在，回退默认模型"
-                )
+                logger.warning(f"[ai_companion] 配置的读空气模型 {pid} 不存在，回退默认模型")
             return await context.get_using_provider_async(umo)
         except Exception as e:
             logger.error(f"[ai_companion] 解析读空气模型失败: {e}", exc_info=True)
@@ -547,12 +521,17 @@ class Orchestrator:
             logger.warning(f"[ai_companion] 获取对话失败，退化为无对话请求: {e}")
             return None
 
-    async def _record_user(self, *, umo: str, event: Any, sender_id: str,
-                           sender_name: str, text: str) -> None:
+    async def _record_user(
+        self, *, umo: str, event: Any, sender_id: str, sender_name: str, text: str
+    ) -> None:
         try:
             await self.db.insert_message(
-                umo=umo, role="user", content=text,
-                sender_id=sender_id, sender_name=sender_name, raw=_safe_raw(event),
+                umo=umo,
+                role="user",
+                content=text,
+                sender_id=sender_id,
+                sender_name=sender_name,
+                raw=_safe_raw(event),
             )
         except Exception as e:
             logger.error(f"[ai_companion] 记录用户消息失败: {e}", exc_info=True)
@@ -616,9 +595,6 @@ class Orchestrator:
 def _safe_raw(event: Any) -> Any:
     try:
         chain = event.get_messages() or []
-        return [
-            c.toDict() if hasattr(c, "toDict") else str(getattr(c, "type", ""))
-            for c in chain
-        ]
+        return [c.toDict() if hasattr(c, "toDict") else str(getattr(c, "type", "")) for c in chain]
     except Exception:
         return None

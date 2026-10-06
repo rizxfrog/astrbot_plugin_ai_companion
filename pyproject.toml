@@ -1,0 +1,37 @@
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+exclude = [".git", "__pycache__", "data", ".venv"]
+
+[tool.ruff.lint]
+# 有意选择的规则集，避免依赖 ruff 默认值随时间变化 —— CI 必须是确定性的。
+select = [
+    "E",    # pycodestyle
+    "F",    # pyflakes
+    "I",    # isort
+    "UP",   # pyupgrade
+    "SIM",  # flake8-simplify
+    "RUF",  # ruff 自有规则
+]
+
+ignore = [
+    # 本插件大量调用平台 API，且需兼容不同 AstrBot 版本的位置差异，
+    # 因此「宽泛捕获 + 静默降级」是刻意的设计，不是疏漏。
+    "BLE001",  # blind-except
+    "S110",    # try-except-pass
+    # 平台返回的对象形状不稳定，属性访问用 getattr 兜底，保留字符串注解便于阅读
+    "RUF012",  # mutable-class-default
+    # 中文注释/文档串里的全角标点会被判为「歧义 Unicode」——
+    # 对中文项目是纯噪音（本仓库该类告警超过 1100 条）。
+    "RUF001",  # ambiguous-unicode-character-string
+    "RUF002",  # ambiguous-unicode-character-docstring
+    "RUF003",  # ambiguous-unicode-character-comment
+]
+
+[tool.ruff.lint.per-file-ignores]
+# 测试需要在导入被测模块**之前**注入 sys.path（插件不在安装路径上），
+# 因此 E402 是刻意为之；变量名与桩代码的宽严也放宽。
+"tests/*" = ["E402", "E501", "E741", "RUF059", "SIM"]
+
+[tool.ruff.format]
+quote-style = "double"

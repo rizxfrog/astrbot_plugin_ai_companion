@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-import uuid
 from dataclasses import dataclass, field
 
 
@@ -32,17 +31,13 @@ class SentMessage:
     @property
     def text(self) -> str:
         return "".join(
-            s.get("data", {}).get("text", "")
-            for s in self.segments
-            if s.get("type") == "text"
+            s.get("data", {}).get("text", "") for s in self.segments if s.get("type") == "text"
         )
 
     @property
     def images(self) -> list[str]:
         return [
-            s.get("data", {}).get("file", "")
-            for s in self.segments
-            if s.get("type") == "image"
+            s.get("data", {}).get("file", "") for s in self.segments if s.get("type") == "image"
         ]
 
 
@@ -73,9 +68,7 @@ class OneBotStub:
         headers = {"X-Self-ID": self.self_id, "X-Client-Role": "Universal"}
         if self.access_token:
             headers["Authorization"] = f"Bearer {self.access_token}"
-        self._ws = await websockets.connect(
-            self.url, additional_headers=headers, max_size=None
-        )
+        self._ws = await websockets.connect(self.url, additional_headers=headers, max_size=None)
         self._connected.set()
         self._reader_task = asyncio.create_task(self._reader())
 
@@ -178,9 +171,7 @@ class OneBotStub:
     ) -> None:
         message: list[dict] = []
         if image_b64:
-            message.append(
-                {"type": "image", "data": {"file": f"base64://{image_b64}"}}
-            )
+            message.append({"type": "image", "data": {"file": f"base64://{image_b64}"}})
         elif image_file:
             message.append({"type": "image", "data": {"file": image_file}})
         message.append({"type": "text", "data": {"text": text}})

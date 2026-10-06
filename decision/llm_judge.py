@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Awaitable, Callable
+from collections.abc import Awaitable, Callable
 
 from astrbot.api import logger
 
@@ -43,7 +43,7 @@ class LLMJudgeDecider(ReplyDecider):
     async def decide(self, ctx: TurnContext) -> Decision | None:
         try:
             result = await asyncio.wait_for(self._judge(ctx), timeout=self._timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(f"[ai_companion] 读空气超时（>{self._timeout}s），弃权")
             return None
         except Exception as e:

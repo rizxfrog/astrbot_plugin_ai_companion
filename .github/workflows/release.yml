@@ -1,0 +1,108 @@
+name: 📦 发布 Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "要发布的 tag（如 v0.10.1）"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: 打包并发布
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 确定版本
+        id: version
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+          # 以 metadata.yaml 为准，并校验与 tag 一致
+          META_VER="$(grep -E '^version:' metadata.yaml | head -1 | sed -E 's/^version:[[:space:]]*//')"
+          echo "meta_version=$META_VER" >> "$GITHUB_OUTPUT"
+
+          if [ "$META_VER" != "$TAG" ]; then
+            echo "::error::metadata.yaml 版本 ($META_VER) 与 tag ($TAG) 不一致"
+            exit 1
+          fi
+          echo "版本校验通过：$TAG"
+
+      - name: 打包插件
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          PKG="astrbot_plugin_ai_companion"
+          STAGE="$(mktemp -d)/$PKG"
+          mkdir -p "$STAGE"
+
+          # 只打包运行期需要的文件；排除开发与运行时产物
+          rsync -a ./ "$STAGE/" \
+            --exclude '.git/' \
+            --exclude '.github/' \
+            --exclude '.pytest_cache/' \
+            --exclude '.ruff_cache/' \
+            --exclude '__pycache__/' \
+            --exclude '*.py[cod]' \
+            --exclude 'data/' \
+            --exclude 'tests/' \
+            --exclude '*.db' \
+            --exclude '*.db-wal' \
+            --exclude '*.db-shm' \
+            --exclude 'requirements-dev.txt'
+
+          # 校验关键文件齐全（缺任一都说明打包逻辑坏了）
+          for f in main.py metadata.yaml _conf_schema.json; do
+            [ -f "$STAGE/$f" ] || { echo "::error::打包缺少 $f"; exit 1; }
+          done
+
+          ZIP="${PKG}-${TAG}.zip"
+          (cd "$(dirname "$STAGE")" && zip -qr "$ZIP" "$PKG")
+          mv "$(dirname "$STAGE")/$ZIP" .
+          echo "已生成 $ZIP（$(unzip -l "$ZIP" | tail -1)）"
+          echo "ZIP=$ZIP" >> "$GITHUB_ENV"
+
+      - name: 从 CHANGELOG 提取本次发布说明
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # 取 CHANGELOG 中该版本的小节作为 release body
+          python3 - "$TAG" <<'PY' > release_body.md
+          import re, sys
+          tag = sys.argv[1]
+          txt = open("CHANGELOG.md", encoding="utf-8").read()
+          # 匹配 "## [v0.10.1] - 2026-10-06" 到下一个 "## [" 之前
+          m = re.search(
+              rf"^## \[{re.escape(tag)}\].*?$(.*?)(?=^## \[|\Z)",
+              txt, re.M | re.S,
+          )
+          if m:
+              print(m.group(1).strip())
+          else:
+              print(f"版本 {tag} 的变更说明见 CHANGELOG.md")
+          PY
+          echo "--- release body ---"
+          head -20 release_body.md
+
+      - name: 创建 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
+          body_path: release_body.md
+          files: ${{ env.ZIP }}
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.tag, '-') }}

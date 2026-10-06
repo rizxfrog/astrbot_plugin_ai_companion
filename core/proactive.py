@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from typing import Any
 
@@ -68,6 +69,8 @@ class ProactiveScheduler:
         self._task: asyncio.Task | None = None
         self._running = False
         self._inflight: set[str] = set()
+        # 持有后台 task 的强引用，防止被 GC（见 _tick）
+        self._inflight_tasks: set[asyncio.Task[None]] = set()
         self._ticks_since_persist = 0
 
     # ------------------------------------------------------------------
@@ -90,10 +93,8 @@ class ProactiveScheduler:
         self._running = False
         if self._task is not None:
             self._task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await self._task
-            except (asyncio.CancelledError, Exception):
-                pass
             self._task = None
         await self._persist_all()
 
@@ -123,7 +124,11 @@ class ProactiveScheduler:
             if not self._is_allowed(actor.umo, cfg):
                 continue
             self._inflight.add(actor.umo)
-            asyncio.create_task(self._guarded_run(actor))
+            # 必须持有引用：asyncio 只保留弱引用，未引用的 task 可能在执行中被
+            # 垃圾回收，导致主动消息静默丢失。
+            task = asyncio.create_task(self._guarded_run(actor))
+            self._inflight_tasks.add(task)
+            task.add_done_callback(self._inflight_tasks.discard)
 
         # 全量落盘有成本，按扫描次数节流；关键时刻（发言后）另有即时落盘。
         self._ticks_since_persist += 1
@@ -136,9 +141,7 @@ class ProactiveScheduler:
             async with actor.lock:
                 await self._run_for(actor)
         except Exception as e:
-            logger.error(
-                f"[ai_companion] {actor.umo} 主动消息失败: {e}", exc_info=True
-            )
+            logger.error(f"[ai_companion] {actor.umo} 主动消息失败: {e}", exc_info=True)
         finally:
             self._inflight.discard(actor.umo)
 
@@ -213,8 +216,11 @@ class ProactiveScheduler:
         if cfg.record_all_messages:
             try:
                 await self.db.insert_message(
-                    umo=umo, role="assistant", content=text,
-                    sender_id=str(self._self_id()), sender_name="bot",
+                    umo=umo,
+                    role="assistant",
+                    content=text,
+                    sender_id=str(self._self_id()),
+                    sender_name="bot",
                     is_proactive=True,
                 )
             except Exception as e:
@@ -240,9 +246,7 @@ class ProactiveScheduler:
         if cfg.proactive_history_turns <= 0:
             return []
         try:
-            rows = await self.db.recent_messages(
-                umo, limit=cfg.proactive_history_turns
-            )
+            rows = await self.db.recent_messages(umo, limit=cfg.proactive_history_turns)
         except Exception:
             return []
         return [

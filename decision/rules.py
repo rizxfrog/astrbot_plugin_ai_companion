@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .base import Decision, TurnContext, ReplyDecider, reply
+from .base import Decision, ReplyDecider, TurnContext, reply
 
 
 class RuleDecider(ReplyDecider):
