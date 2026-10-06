@@ -6,3 +6,6 @@ __pycache__/
 *.db
 *.db-wal
 *.db-shm
+
+# AstrBot 运行时目录（本地测试会按 cwd 生成，含面板凭据，禁止入库）
+data/
