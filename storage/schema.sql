@@ -49,6 +49,17 @@ CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
 END;
 
 -- ============================================================
+-- 会话运行态持久化（供主动消息跨重启恢复）
+-- ============================================================
+CREATE TABLE IF NOT EXISTS session_state (
+    umo                TEXT PRIMARY KEY,
+    last_message_ts    REAL NOT NULL DEFAULT 0,
+    unanswered_count   INTEGER NOT NULL DEFAULT 0,
+    last_proactive_ts  REAL NOT NULL DEFAULT 0,
+    updated_at         REAL NOT NULL DEFAULT 0
+);
+
+-- ============================================================
 -- 人物画像（长期记忆：每个人一份）
 -- ============================================================
 CREATE TABLE IF NOT EXISTS profiles (

@@ -42,6 +42,18 @@ def _as_str(value: Any, default: str = "") -> str:
     return str(value)
 
 
+def _as_str_list(value: Any) -> list[str]:
+    """归一为字符串列表（兼容平台配置里可能出现的字符串形式）。"""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        parts = [p.strip() for p in value.replace("\n", ",").split(",")]
+        return [p for p in parts if p]
+    if isinstance(value, (list, tuple, set)):
+        return [str(v).strip() for v in value if str(v).strip()]
+    return []
+
+
 class CompanionConfig:
     """插件配置的强类型视图。"""
 
@@ -79,6 +91,30 @@ class CompanionConfig:
             1, _as_int(self.raw.get("compact_min_dropped"), 10)
         )
         self.compact_provider_id = _as_str(self.raw.get("compact_provider_id"), "")
+        # --- 主动消息 ---
+        self.enable_proactive = _as_bool(self.raw.get("enable_proactive"), False)
+        self.proactive_sessions = _as_str_list(self.raw.get("proactive_sessions"))
+        self.proactive_group = _as_bool(self.raw.get("proactive_group"), True)
+        self.proactive_private = _as_bool(self.raw.get("proactive_private"), True)
+        self.proactive_threshold_minutes = max(
+            1, _as_int(self.raw.get("proactive_threshold_minutes"), 60)
+        )
+        self.proactive_check_interval_seconds = max(
+            5, _as_int(self.raw.get("proactive_check_interval_seconds"), 60)
+        )
+        self.proactive_max_unanswered = max(
+            0, _as_int(self.raw.get("proactive_max_unanswered"), 2)
+        )
+        self.proactive_cooldown_minutes = max(
+            0, _as_int(self.raw.get("proactive_cooldown_minutes"), 240)
+        )
+        self.proactive_history_turns = max(
+            0, _as_int(self.raw.get("proactive_history_turns"), 10)
+        )
+        self.proactive_provider_id = _as_str(
+            self.raw.get("proactive_provider_id"), ""
+        )
+        self.proactive_prompt = _as_str(self.raw.get("proactive_prompt"), "")
         self.system_prompt_extra = _as_str(self.raw.get("system_prompt_extra"), "")
         self.inject_time = _as_bool(self.raw.get("inject_time"), True)
         self.debug_mode = _as_bool(self.raw.get("debug_mode"), False)

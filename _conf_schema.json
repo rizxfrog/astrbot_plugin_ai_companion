@@ -127,6 +127,81 @@
     "default": true,
     "hint": "作为临时内容块注入当前时间（不写入历史记录）。"
   },
+  "_proactive_header": {
+    "description": "💬 主动消息",
+    "type": "text",
+    "default": "",
+    "hint": "真人不只被动应答，也会在冷场时主动开口。开启后，沉默够久的会话会被主动搭话；连续主动无人回应时会自动安静下来。"
+  },
+  "enable_proactive": {
+    "description": "启用主动消息",
+    "type": "bool",
+    "default": false,
+    "hint": "默认关闭。开启后需要同时在「主动消息会话白名单」里填入要主动搭话的会话（UMO），避免打扰到所有群。"
+  },
+  "proactive_sessions": {
+    "description": "主动消息会话白名单",
+    "type": "list",
+    "default": [],
+    "hint": "填写允许被主动搭话的会话 UMO（形如 default:GroupMessage:123456）。留空表示不主动任何会话——这是刻意的安全默认，防止深夜打扰陌生的群。如需主动全部会话，填写 *。",
+    "items": {"type": "string"}
+  },
+  "proactive_group": {
+    "description": "群聊主动消息",
+    "type": "bool",
+    "default": true,
+    "hint": "是否允许对群聊主动发言。会话白名单才是真正的准入依据，本开关仅作类型级粗过滤。"
+  },
+  "proactive_private": {
+    "description": "私聊主动消息",
+    "type": "bool",
+    "default": true,
+    "hint": "是否允许对私聊主动发言。会话白名单才是真正的准入依据，本开关仅作类型级粗过滤。"
+  },
+  "proactive_threshold_minutes": {
+    "description": "沉默多久后主动",
+    "type": "int",
+    "default": 60,
+    "hint": "会话内连续该时长没有动静，才会考虑主动发言。"
+  },
+  "proactive_check_interval_seconds": {
+    "description": "扫描间隔 (秒)",
+    "type": "int",
+    "default": 60,
+    "hint": "全局调度循环每隔多久扫描一次候选会话。所有会话共用这一个循环，不随会话数增加。"
+  },
+  "proactive_max_unanswered": {
+    "description": "连续主动次数上限",
+    "type": "int",
+    "default": 2,
+    "hint": "连续主动搭话都没有人回应，达到该次数就进入冷却并安静下来。设为 0 表示不限制（不推荐）。"
+  },
+  "proactive_cooldown_minutes": {
+    "description": "被无视后的冷却 (分钟)",
+    "type": "int",
+    "default": 240,
+    "hint": "连续主动无人回应后，安静该时长再重新尝试。"
+  },
+  "proactive_history_turns": {
+    "description": "主动消息参考的历史条数",
+    "type": "int",
+    "default": 10,
+    "hint": "生成主动消息时，参考本会话最近多少条消息以延续话题。"
+  },
+  "proactive_provider_id": {
+    "description": "主动消息使用的模型",
+    "type": "string",
+    "default": "",
+    "hint": "留空则使用默认模型。",
+    "_special": "select_provider"
+  },
+  "proactive_prompt": {
+    "description": "主动消息提示词",
+    "type": "text",
+    "default": "",
+    "hint": "留空使用内置的简洁提示词。可用占位符：{{silence_minutes}} {{unanswered_count}} {{current_time}}。",
+    "editor_mode": true
+  },
   "debug_mode": {
     "description": "调试日志",
     "type": "bool",

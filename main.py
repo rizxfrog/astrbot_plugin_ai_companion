@@ -20,7 +20,7 @@ from astrbot.api.star import Context, Star, StarTools
 from astrbot.core.config.astrbot_config import AstrBotConfig
 
 from .context import ContextAssembler
-from .core import CompanionConfig, Orchestrator, SessionRegistry
+from .core import CompanionConfig, Orchestrator, ProactiveScheduler, SessionRegistry
 from .decision import (
     DecisionChain,
     HardFilterDecider,
@@ -49,6 +49,7 @@ class AICompanionPlugin(Star):
             schema_path=Path(__file__).parent / "storage" / "schema.sql",
         )
         self.orchestrator: Orchestrator | None = None
+        self.scheduler: ProactiveScheduler | None = None
 
     # ------------------------------------------------------------------
     # 生命周期
@@ -103,10 +104,28 @@ class AICompanionPlugin(Star):
         except Exception as e:
             logger.error(f"[ai_companion] 注册工具失败: {e}", exc_info=True)
 
+        # 主动消息调度
+        self.scheduler = ProactiveScheduler(
+            config=self.config,
+            registry=self.registry,
+            db=self.db,
+            context=self.context,
+            conversation_manager=getattr(self.context, "conversation_manager", None),
+        )
+        try:
+            await self.scheduler.start()
+        except Exception as e:
+            logger.error(f"[ai_companion] 启动主动消息失败: {e}", exc_info=True)
+
         logger.info("[ai_companion] 插件已初始化")
 
     async def terminate(self) -> None:
         """插件卸载/重载时调用。"""
+        if self.scheduler is not None:
+            try:
+                await self.scheduler.stop()
+            except Exception as e:
+                logger.error(f"[ai_companion] 停止主动消息失败: {e}", exc_info=True)
         await self.db.close()
         logger.info("[ai_companion] 插件已停止")
 

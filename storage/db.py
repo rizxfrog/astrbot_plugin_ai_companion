@@ -346,5 +346,45 @@ class MemoryDB:
 
         return await self._run(_op)
 
+    # ------------------------------------------------------------------
+    # 会话运行态（主动消息用，跨重启恢复）
+    # ------------------------------------------------------------------
+    async def upsert_session_state(
+        self,
+        umo: str,
+        *,
+        last_message_ts: float,
+        unanswered_count: int,
+        last_proactive_ts: float,
+    ) -> None:
+        def _op() -> None:
+            self._execute(
+                "INSERT INTO session_state "
+                "(umo, last_message_ts, unanswered_count, last_proactive_ts, updated_at) "
+                "VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(umo) DO UPDATE SET "
+                "last_message_ts = excluded.last_message_ts, "
+                "unanswered_count = excluded.unanswered_count, "
+                "last_proactive_ts = excluded.last_proactive_ts, "
+                "updated_at = excluded.updated_at",
+                (
+                    umo,
+                    last_message_ts,
+                    unanswered_count,
+                    last_proactive_ts,
+                    time.time(),
+                ),
+                commit=True,
+            )
+
+        await self._run(_op)
+
+    async def load_session_states(self) -> list[sqlite3.Row]:
+        def _op():
+            rows = self._execute("SELECT * FROM session_state", fetch="all")
+            return list(rows or [])
+
+        return await self._run(_op)
+
     async def vacuum(self) -> None:
         await self._run(lambda: self._execute("VACUUM", commit=True))
