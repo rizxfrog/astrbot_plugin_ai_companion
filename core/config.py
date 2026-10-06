@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..persona import DEFAULT_DEFLECT_PRIVATE, DEFAULT_PERSONA_PROMPT
+
 
 def _as_bool(value: Any, default: bool) -> bool:
     if isinstance(value, bool):
@@ -154,6 +156,21 @@ class CompanionConfig:
         self.system_prompt_extra = _as_str(self.raw.get("system_prompt_extra"), "")
         self.inject_time = _as_bool(self.raw.get("inject_time"), True)
         self.debug_mode = _as_bool(self.raw.get("debug_mode"), False)
+        # --- 人格与身份 ---
+        self.enable_persona = _as_bool(self.raw.get("enable_persona"), True)
+        # 空字符串表示「用内置人格」，而不是「不用人格」
+        self.persona_prompt = (
+            _as_str(self.raw.get("persona_prompt"), "").strip()
+            or DEFAULT_PERSONA_PROMPT
+        )
+        self.identity_conceal = _as_bool(self.raw.get("identity_conceal"), True)
+        self.identity_deflect_private = _as_str_list(
+            self.raw.get("identity_deflect_private")
+        ) or list(DEFAULT_DEFLECT_PRIVATE)
+        # 群聊默认空列表 = 直接无视
+        self.identity_deflect_group = _as_str_list(
+            self.raw.get("identity_deflect_group")
+        )
 
     def enabled_for(self, *, is_private: bool) -> bool:
         if not self.enable:

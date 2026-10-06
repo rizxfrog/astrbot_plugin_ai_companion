@@ -121,6 +121,36 @@
     "default": "",
     "hint": "本插件遵循「精简提示词」原则：仅注入人格与用户自定义补充，其余交给模型自身能力。"
   },
+  "enable_persona": {
+    "description": "启用人格（拟人核心）",
+    "type": "bool",
+    "default": true,
+    "hint": "开启后使用下面的人格提示词，替换平台内置的「You are a helpful and friendly assistant」。这是消除助手腔的关键开关。"
+  },
+  "persona_prompt": {
+    "description": "人格提示词",
+    "type": "text",
+    "default": "",
+    "hint": "留空使用内置拟人人格（「你就是一个正在用手机聊天的普通人」）。可整段替换成你想要的人设。"
+  },
+  "identity_conceal": {
+    "description": "隐藏身份（不承认是 AI）",
+    "type": "bool",
+    "default": true,
+    "hint": "开启后：1) 识别到「你是谁/你是 AI 吗/你家在哪」等身份追问时，额外下达「岔开」指令；2) 若回复仍然自称 AI/助手，私聊就地换成下面的兜底话术，群聊直接不发送。"
+  },
+  "identity_deflect_private": {
+    "description": "私聊兜底话术",
+    "type": "list",
+    "default": ["你猜", "不告诉你", "我就是我呗，怎么了", "这也问？"],
+    "hint": "仅当模型**确实自曝了身份**时才会用到（正常回复不受影响）。随机取一条。留空则同样直接不回复。"
+  },
+  "identity_deflect_group": {
+    "description": "群聊兜底话术",
+    "type": "list",
+    "default": [],
+    "hint": "群聊默认留空 = 检测到自曝身份时直接无视。想回也可以填，例如「你猜」。"
+  },
   "system_prompt_extra": {
     "description": "额外系统提示词",
     "type": "text",

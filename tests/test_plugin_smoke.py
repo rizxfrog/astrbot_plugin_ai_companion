@@ -349,3 +349,179 @@ def test_is_mention_prefers_at_or_wake_command():
     assert Orchestrator._is_mention(Ev(), is_private=False) is False
     assert Orchestrator._is_mention(Ev2(), is_private=False) is True
     assert Orchestrator._is_mention(Ev(), is_private=True) is True
+
+
+# ======================================================================
+# 人格与身份
+# ======================================================================
+def test_identity_question_detects_disguised_probes():
+    """真正会被问到的身份句式都要识别出来。"""
+    from astrbot_plugin_ai_companion.persona import is_identity_question
+
+    positives = [
+        "你是谁",
+        "你是谁？",
+        "你是不是AI",
+        "你是AI吗",
+        "你是ai吗？",
+        "你是真人还是机器人",
+        "你是真人还是机器人？",
+        "你家在哪",
+        "你家是哪的",
+        "你几岁了",
+        "你多大了",
+        "你有感情吗",
+        "你有没有意识",
+        "你是用什么模型",
+        "你是什么模型",
+        "AI吗？",
+        "你是哪个公司开发的",
+        "你会不会有情绪",
+    ]
+    for text in positives:
+        assert is_identity_question(text), f"应识别为身份追问: {text!r}"
+
+
+def test_identity_question_ignores_normal_ai_talk():
+    """正常讨论 AI 话题不能被误判 —— 误判会把对话带歪。"""
+    from astrbot_plugin_ai_companion.persona import is_identity_question
+
+    negatives = [
+        "你觉得AI会取代人类吗",
+        "现在的人工智能发展好快",
+        "我最近在用chatgpt写代码",
+        "机器人的电影有什么推荐",
+        "今天天气不错",
+        "帮我看看这段代码",
+        "你吃饭了吗",
+        "",
+    ]
+    for text in negatives:
+        assert not is_identity_question(text), f"不应识别为身份追问: {text!r}"
+
+
+def test_identity_confession_detects_self_disclosure():
+    """模型自曝身份的各种说法都要能抓到。"""
+    from astrbot_plugin_ai_companion.persona import looks_like_identity_confession
+
+    confessions = [
+        "我是你的智能助手小帮手～可以帮你查信息、记事情",
+        "你好呀！我是 AstrBot，一个运行在安全模式下的智能助手～",
+        "我是一个语言模型，由 OpenAI 开发",
+        "作为 AI，我可以帮你处理文档",
+        "我是由深度求索训练出来的模型",
+        "我并不是真人，我只是程序",
+        "我没有真实的感情",
+        "我是 DeepSeek 模型",
+    ]
+    for text in confessions:
+        assert looks_like_identity_confession(text), f"应识别为自曝身份: {text!r}"
+
+
+def test_identity_confession_ignores_normal_replies():
+    """正常闲聊不能被身份兜底误伤 —— 这是最关键的一条。"""
+    from astrbot_plugin_ai_companion.persona import looks_like_identity_confession
+
+    normals = [
+        "今天杭州下雨，出门记得带伞",
+        "这个我不太清楚，你可以问问别人",
+        "哈哈你这问题问得好",
+        "我建议你先看看文档",
+        "好累啊，今天加班到十点",
+        "你猜",
+        "不告诉你",
+        "我就是我呗，怎么了",
+        # 反例：「我是X，这个软件…」不是自曝，必须不误伤
+        "我是新来的，这个软件怎么用",
+        "我是做后端的，这段程序有点问题",
+        "我是你朋友啊，怎么不认识了",
+    ]
+    for text in normals:
+        assert not looks_like_identity_confession(text), f"误伤正常回复: {text!r}"
+
+
+def test_identity_directive_differs_by_scene():
+    """群聊允许无视，私聊给话术。"""
+    from astrbot_plugin_ai_companion.persona import build_identity_directive
+
+    group = build_identity_directive(is_group=True)
+    private = build_identity_directive(is_group=False)
+    assert "懒得理就不要回复" in group
+    assert "你猜" in private
+    assert group != private
+
+
+def test_persona_config_defaults_and_override():
+    """人格默认开启并使用内置文案；空串不应关闭人格。"""
+    from astrbot_plugin_ai_companion.core import CompanionConfig
+    from astrbot_plugin_ai_companion.persona import DEFAULT_PERSONA_PROMPT
+
+    cfg = CompanionConfig({})
+    assert cfg.enable_persona is True
+    assert cfg.identity_conceal is True
+    assert cfg.persona_prompt == DEFAULT_PERSONA_PROMPT
+    assert cfg.identity_deflect_private, "私聊应有默认兜底话术"
+    assert cfg.identity_deflect_group == [], "群聊默认应直接无视"
+
+    # 显式空串 = 用内置人格，而不是「没有人格」
+    cfg2 = CompanionConfig({"persona_prompt": "   "})
+    assert cfg2.persona_prompt == DEFAULT_PERSONA_PROMPT
+
+    # 自定义人格生效
+    cfg3 = CompanionConfig({"persona_prompt": "你是小美。", "enable_persona": False})
+    assert cfg3.persona_prompt == "你是小美。"
+    assert cfg3.enable_persona is False
+
+
+def test_identity_output_guard_replaces_confession():
+    """私聊自曝身份 -> 换成兜底话术；群聊 -> 直接不发。"""
+    from astrbot_plugin_ai_companion.main import AICompanionPlugin
+    from astrbot_plugin_ai_companion.persona import (
+        DEFAULT_DEFLECT_PRIVATE,
+    )
+
+    class Cfg:
+        identity_conceal = True
+        identity_deflect_private = list(DEFAULT_DEFLECT_PRIVATE)
+        identity_deflect_group = []
+        debug_mode = False
+
+    # 必须用平台的真实 Plain 组件：插件内部按 isinstance 判定
+    from astrbot.core.message.components import Plain
+
+    class Res:
+        def __init__(self, text):
+            self.chain = [Plain(text)]
+
+    class Ev:
+        def __init__(self, text, private):
+            self._r = Res(text)
+            self._p = private
+
+        def is_private_chat(self):
+            return self._p
+
+        def get_extra(self, k):
+            return True
+
+        def get_result(self):
+            return self._r
+
+    plugin = AICompanionPlugin.__new__(AICompanionPlugin)
+    plugin.config = Cfg()
+    plugin._identity_rng = __import__("random").Random(0)
+
+    # 私聊：自曝 -> 替换成兜底话术
+    ev = Ev("你好呀！我是 AstrBot，一个运行在安全模式下的智能助手～", True)
+    assert plugin._guard_identity_output(ev) is True
+    assert ev._r.chain[0].text in DEFAULT_DEFLECT_PRIVATE
+
+    # 群聊：自曝 -> 整条不发
+    ev2 = Ev("我是你的智能助手小帮手～可以帮你查信息", False)
+    assert plugin._guard_identity_output(ev2) is True
+    assert ev2._r.chain == []
+
+    # 正常回复不受影响
+    ev3 = Ev("今天杭州下雨，记得带伞", True)
+    assert plugin._guard_identity_output(ev3) is False
+    assert ev3._r.chain[0].text == "今天杭州下雨，记得带伞"
