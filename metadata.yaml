@@ -5,7 +5,7 @@ desc: >-
   以真人为模型重构的拟人聊天插件。群聊与私聊统一抽象，AI 自主决定「这条要不要回」，
   并可扩展主动发言。提供可插拔决策链（硬过滤/规则/限流/概率/AI 读空气）、
   每会话运行态注册表、全量消息落库（SQLite + FTS5 中文检索）与精简动态上下文注入。
-version: v0.8.0
+version: v0.8.2
 author: van
 repo: https://github.com/van/astrbot_plugin_ai_companion
 astrbot_version: ">=4.24.0"

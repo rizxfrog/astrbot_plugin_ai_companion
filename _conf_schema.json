@@ -142,7 +142,12 @@
   "identity_deflect_private": {
     "description": "私聊兜底话术",
     "type": "list",
-    "default": ["你猜", "不告诉你", "我就是我呗，怎么了", "这也问？"],
+    "default": [
+      "你猜",
+      "不告诉你",
+      "我就是我呗，怎么了",
+      "这也问？"
+    ],
     "hint": "仅当模型**确实自曝了身份**时才会用到（正常回复不受影响）。随机取一条。留空则同样直接不回复。"
   },
   "identity_deflect_group": {
@@ -180,7 +185,9 @@
     "type": "list",
     "default": [],
     "hint": "填写允许被主动搭话的会话 UMO（形如 default:GroupMessage:123456）。留空表示不主动任何会话——这是刻意的安全默认，防止深夜打扰陌生的群。如需主动全部会话，填写 *。",
-    "items": {"type": "string"}
+    "items": {
+      "type": "string"
+    }
   },
   "proactive_group": {
     "description": "群聊主动消息",
@@ -298,6 +305,18 @@
     "type": "bool",
     "default": true,
     "hint": "把表情包放在插件数据目录的 stickers/ 下，子目录名即情绪分类（如 stickers/开心/、stickers/无语/）。AI 会在回复里写 [sticker:开心] 主动发表情，也可以在配置里让它按概率自动补一张。"
+  },
+  "sticker_send_probability": {
+    "description": "表情发送闸门（放行率）",
+    "type": "float",
+    "default": 0.2,
+    "hint": "0~1。所有表情发送路径共用的限流闸门，默认 0.2 表示拦掉 80%。AI 主动写 [sticker:x] 和调用表情工具同样受限 —— 否则「AI 主动要」就必发。设为 1 表示不限制，0 表示完全禁止发表情。"
+  },
+  "sticker_cooldown_seconds": {
+    "description": "表情冷却（秒）",
+    "type": "int",
+    "default": 0,
+    "hint": "同一会话内两次成功发表情的最小间隔。0 表示只看概率。设为 60 可避免连着几条回复都带图。"
   },
   "sticker_auto_probability": {
     "description": "自动补表情概率",

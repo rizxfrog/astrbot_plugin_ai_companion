@@ -37,7 +37,7 @@ from .decision import (
     RateLimitDecider,
     RuleDecider,
 )
-from .humanize import Humanizer, StickerLibrary
+from .humanize import Humanizer, StickerLibrary, StickerRateLimiter
 from .humanize.humanizer import DANGLING_PLACEHOLDER_PATTERN, STICKER_PATTERN
 from .memory import Compactor, KnowledgeExtractor
 from .persona import (
@@ -144,6 +144,21 @@ class AICompanionPlugin(Star):
         else:
             deciders.append(ProbabilityDecider(rate=_gate_rate))
         self.orchestrator.chain = DecisionChain(deciders)
+
+        # 表情统一闸门：三条发送路径（标记 / 工具 / 自动补图）共用
+        try:
+            self.stickers.limiter = StickerRateLimiter(
+                drop_rate=self.config.sticker_send_probability,
+                cooldown_seconds=self.config.sticker_cooldown_seconds,
+            )
+            if self.config.debug_mode:
+                logger.info(
+                    f"[ai_companion] 表情闸门：放行率 "
+                    f"{self.config.sticker_send_probability:.2f}，"
+                    f"冷却 {self.config.sticker_cooldown_seconds}s"
+                )
+        except Exception as e:
+            logger.error(f"[ai_companion] 初始化表情闸门失败: {e}", exc_info=True)
 
         # 注册 LLM 工具（自建工具类，不依赖装饰器解析）
         try:
@@ -396,6 +411,10 @@ class AICompanionPlugin(Star):
             return
         if not event.get_extra(MANAGED_KEY):
             return
+        # 闸门全关时不再引导：否则等于鼓励模型去调一个必定被拦的工具，
+        # 白白浪费一次工具往返。
+        if cfg.sticker_send_probability <= 0:
+            return
         try:
             from astrbot.core.agent.message import TextPart
 
@@ -406,6 +425,8 @@ class AICompanionPlugin(Star):
                 "想发表情时，直接调用 send_sticker 工具（可选填分类）。"
                 "不要在文字里写 [sticker:xx]、[图片] 之类的占位符，"
                 "也不要在回复里解释自己的工具调用过程。\n"
+                "表情只是偶尔的调剂：大多数回复不要发表情，"
+                "只有情绪明显、或者没什么话可说时再用一张。\n"
                 "</表情包>"
             )
             req.extra_user_content_parts.append(TextPart(text=hint).mark_as_temp())

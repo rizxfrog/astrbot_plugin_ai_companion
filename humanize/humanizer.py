@@ -44,6 +44,7 @@ class HumanizeResult:
     replaced: int = 0
     appended: bool = False
     typo: bool = False
+    blocked: int = 0
 
 
 class Humanizer:
@@ -61,7 +62,22 @@ class Humanizer:
         self._rng = rng or random.Random()
 
     # ------------------------------------------------------------------
-    def apply_to_text(self, text: str) -> tuple[str, list[Any]]:
+    # ------------------------------------------------------------------
+    def _pick_sticker(self, category: str | None, *, umo: str) -> tuple[Any, str]:
+        """挑一张表情并过闸门。
+
+        Returns:
+            ``(path 或 None, 拦截原因)``。path 为 None 表示没挑到或被限流。
+        """
+        limiter = getattr(self.stickers, "limiter", None)
+        if limiter is not None:
+            ok, reason = limiter.allow(umo)
+            if not ok:
+                return None, reason
+        path = self.stickers.pick(category, rng=self._rng)
+        return path, ""
+
+    def apply_to_text(self, text: str, *, umo: str = "") -> tuple[str, list[Any]]:
         """给**没有事件对象**的场景（如主动消息）处理文本。
 
         主动消息直接走 ``context.send_message``，不经过 ``on_decorating_result``，
@@ -78,7 +94,8 @@ class Humanizer:
 
         if cfg.enable_stickers and not self.stickers.empty:
             def _sub(match):
-                path = self.stickers.pick(match.group(1), rng=self._rng)
+                # 闸门：AI 主动写的标记也要限流，否则"主动要"就必发
+                path, _ = self._pick_sticker(match.group(1), umo="")
                 if path is not None and Image is not None:
                     images.append(Image.fromFileSystem(path))
                 return ""
@@ -89,7 +106,7 @@ class Humanizer:
                 and cfg.sticker_auto_probability > 0
                 and self._rng.random() < cfg.sticker_auto_probability
             ):
-                path = self.stickers.pick(None, rng=self._rng)
+                path = self._pick_sticker(None, umo="")[0]
                 if path is not None and Image is not None:
                     images.append(Image.fromFileSystem(path))
         else:
@@ -115,19 +132,44 @@ class Humanizer:
             return result
 
         chain = list(message_result.chain)
+        umo = str(getattr(event, "unified_msg_origin", "") or "")
 
         # 表情标记是我们给模型的指令，不是正文：无论能否换成图片，都必须从文本里
         # 消掉，否则用户会看到字面量 "[sticker:开心]"。
         if cfg.enable_stickers and not self.stickers.empty:
-            chain, result = self._apply_stickers(chain, result)
+            chain, result = self._apply_stickers(chain, result, umo=umo)
         else:
             chain, result = self._strip_markers(chain, result)
 
         if cfg.enable_typos and Plain is not None:
             result.typo = self._apply_typos(chain)
 
+        # 清掉模型留下的悬空媒体占位符（如 ``[图片]``）。
+        # 真实图片是 Image 组件，字面量 "[图片]" 只可能是模型想配图却没配上，
+        # 直接发出去用户会看到这个字面量。apply_to_text 一直有这步，事件路径
+        # 此前漏了。
+        chain = self._strip_placeholders(chain)
+
         message_result.chain = chain
         return result
+
+    @staticmethod
+    def _strip_placeholders(chain: list) -> list:
+        """删除文本里残留的媒体占位符；清理后为空的段直接丢弃。"""
+        if Plain is None:
+            return chain
+        out: list = []
+        for comp in chain:
+            if isinstance(comp, Plain) and comp.text:
+                cleaned = DANGLING_PLACEHOLDER_PATTERN.sub("", comp.text)
+                # 顺带收掉清理后留下的多余空白/空行
+                cleaned = re.sub(r"[ \t]{2,}", " ", cleaned).strip()
+                if cleaned:
+                    comp.text = cleaned
+                    out.append(comp)
+                continue
+            out.append(comp)
+        return out
 
     def _strip_markers(
         self, chain: list, result: HumanizeResult
@@ -149,7 +191,7 @@ class Humanizer:
         return out, result
 
     # ------------------------------------------------------------------
-    def _apply_stickers(self, chain: list, result: HumanizeResult) -> tuple[list, HumanizeResult]:
+    def _apply_stickers(self, chain: list, result: HumanizeResult, *, umo: str = "") -> tuple[list, HumanizeResult]:
         """处理 [sticker:分类] 标记，并按概率补一张。"""
         cfg = self.config
         out: list = []
@@ -171,12 +213,14 @@ class Humanizer:
                 head = text[cursor : match.start()]
                 if head.strip():
                     out.append(Plain(head))
-                path = self.stickers.pick(
-                    match.group(1), rng=self._rng
-                )
+                # 闸门在 _pick_sticker 内部生效：被限流时返回 None，标记直接消失
+                path, reason = self._pick_sticker(match.group(1), umo=umo)
                 if path is not None and Image is not None:
                     out.append(Image.fromFileSystem(path))
                     result.replaced += 1
+                elif reason:
+                    result.blocked += 1
+                    logger.debug(f"[ai_companion] 表情被限流：{reason}")
                 cursor = match.end()
             tail = text[cursor:]
             if tail.strip():
@@ -188,10 +232,12 @@ class Humanizer:
             and cfg.sticker_auto_probability > 0
             and self._rng.random() < cfg.sticker_auto_probability
         ):
-            path = self.stickers.pick(None, rng=self._rng)
+            path, reason = self._pick_sticker(None, umo=umo)
             if path is not None and Image is not None:
                 out.append(Image.fromFileSystem(path))
                 result.appended = True
+            elif reason:
+                logger.debug(f"[ai_companion] 自动表情被限流：{reason}")
 
         return out, result
 

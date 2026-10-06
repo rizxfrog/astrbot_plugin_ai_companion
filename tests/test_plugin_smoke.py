@@ -525,3 +525,181 @@ def test_identity_output_guard_replaces_confession():
     ev3 = Ev("今天杭州下雨，记得带伞", True)
     assert plugin._guard_identity_output(ev3) is False
     assert ev3._r.chain[0].text == "今天杭州下雨，记得带伞"
+
+
+# ======================================================================
+# 表情闸门
+# ======================================================================
+def test_sticker_limiter_blocks_expected_share():
+    """放行率 0.2 -> 实际放行比例应接近 20%（拦掉约 80%）。"""
+    import random as _r
+
+    from astrbot_plugin_ai_companion.humanize import StickerRateLimiter
+
+    lim = StickerRateLimiter(drop_rate=0.2, rng=_r.Random(42))
+    allowed = sum(1 for _ in range(3000) if lim.allow("umo:1")[0])
+    ratio = allowed / 3000
+    assert 0.17 < ratio < 0.23, f"放行率异常: {ratio:.3f}"
+    assert lim.blocked == 3000 - allowed
+
+
+def test_sticker_limiter_full_allow_and_full_block():
+    """0 全拦、1 全放 —— 边界必须干净。"""
+    from astrbot_plugin_ai_companion.humanize import StickerRateLimiter
+
+    block_all = StickerRateLimiter(drop_rate=0.0)
+    assert all(not block_all.allow("u")[0] for _ in range(20))
+    assert block_all.allowed == 0
+
+    allow_all = StickerRateLimiter(drop_rate=1.0)
+    assert all(allow_all.allow("u")[0] for _ in range(20))
+    assert allow_all.blocked == 0
+
+
+def test_sticker_limiter_cooldown_is_per_session():
+    """冷却按会话隔离，且只由「成功发出」推进。"""
+    from astrbot_plugin_ai_companion.humanize import StickerRateLimiter
+
+    lim = StickerRateLimiter(drop_rate=1.0, cooldown_seconds=60)
+    ok, _ = lim.allow("a", now=1000.0)
+    assert ok
+    # 同会话冷却中
+    ok2, reason = lim.allow("a", now=1030.0)
+    assert not ok2 and "冷却" in reason
+    # 另一个会话不受影响
+    assert lim.allow("b", now=1030.0)[0] is True
+    # 冷却过后恢复
+    assert lim.allow("a", now=1061.0)[0] is True
+
+    # 被概率拦下的不应推进冷却窗口
+    lim2 = StickerRateLimiter(drop_rate=0.0, cooldown_seconds=60)
+    lim2.allow("x", now=1000.0)          # 被拦
+    assert lim2.allow("x", now=1000.0)[0] is False   # 仍无冷却负担
+
+
+def test_humanizer_marker_path_respects_limiter():
+    """AI 主动写 [sticker:x] 也必须被闸门拦下 —— 这是本次修复的核心。"""
+    import random as _r
+
+    from astrbot.core.message.components import Plain
+    from astrbot_plugin_ai_companion.humanize import (
+        Humanizer,
+        StickerLibrary,
+        StickerRateLimiter,
+    )
+
+    class Cfg:
+        enable_stickers = True
+        sticker_auto_probability = 0.0     # 关掉自动补图，只看标记路径
+        enable_typos = False
+
+    lib = StickerLibrary(roots=[PLUGIN_DIR / "stickers"])
+    assert not lib.empty, "测试需要真实的 stickers 目录"
+    lib.limiter = StickerRateLimiter(drop_rate=0.0)  # 全拦
+
+    h = Humanizer(stickers=lib, config=Cfg(), rng=_r.Random(1))
+
+    class Res:
+        def __init__(self):
+            self.chain = [Plain("好的 [sticker:开心]")]
+
+    class Ev:
+        unified_msg_origin = "p:GroupMessage:1"
+
+        def __init__(self):
+            self._r = Res()
+
+        def get_result(self):
+            return self._r
+
+    ev = Ev()
+    out = h.apply(ev)
+    texts = "".join(c.text for c in ev._r.chain if isinstance(c, Plain))
+    assert "[sticker" not in texts, "标记必须被清掉，不能字面发给用户"
+    assert out.replaced == 0, "被限流时不应有图片替换"
+    assert out.blocked == 1, "应记录一次拦截"
+
+
+def test_humanizer_allows_when_limiter_absent_or_open():
+    """没有闸门（未初始化）或放行率 1 时，标记应正常变成图片。"""
+    import random as _r
+
+    from astrbot.core.message.components import Plain
+    from astrbot_plugin_ai_companion.humanize import (
+        Humanizer,
+        StickerLibrary,
+        StickerRateLimiter,
+    )
+
+    class Cfg:
+        enable_stickers = True
+        sticker_auto_probability = 0.0
+        enable_typos = False
+
+    for limiter in (None, StickerRateLimiter(drop_rate=1.0)):
+        lib = StickerLibrary(roots=[PLUGIN_DIR / "stickers"])
+        lib.limiter = limiter
+
+        h = Humanizer(stickers=lib, config=Cfg(), rng=_r.Random(1))
+
+        class Res:
+            def __init__(self):
+                self.chain = [Plain("哈哈 [sticker:开心]")]
+
+        class Ev:
+            unified_msg_origin = "p:GroupMessage:1"
+
+            def __init__(self):
+                self._r = Res()
+
+            def get_result(self):
+                return self._r
+
+        ev = Ev()
+        out = h.apply(ev)
+        assert out.replaced == 1, f"limiter={limiter} 时应正常插图"
+        assert out.blocked == 0
+
+
+def test_dangling_image_placeholder_stripped_on_event_path():
+    """模型写 [图片] 却没真配图时，不能把字面量发给用户（回归）。
+
+    此前只有主动消息路径做了清理，事件路径漏了，用户会看到 "[图片]"。
+    """
+    import random as _r
+
+    from astrbot.core.message.components import Plain
+    from astrbot_plugin_ai_companion.humanize import Humanizer, StickerLibrary
+
+    class Cfg:
+        enable_stickers = False       # 关掉表情，确保不插图
+        sticker_auto_probability = 0.0
+        enable_typos = False
+
+    lib = StickerLibrary(roots=[PLUGIN_DIR / "stickers"])
+    h = Humanizer(stickers=lib, config=Cfg(), rng=_r.Random(1))
+
+    class Res:
+        def __init__(self, text):
+            self.chain = [Plain(text)]
+
+    class Ev:
+        unified_msg_origin = "p:FriendMessage:1"
+
+        def __init__(self, text):
+            self._r = Res(text)
+
+        def get_result(self):
+            return self._r
+
+    ev = Ev("你家猫叫煤球呀！ [图片]")
+    h.apply(ev)
+    text = "".join(c.text for c in ev._r.chain if isinstance(c, Plain))
+    assert "[图片]" not in text, f"占位符泄漏: {text!r}"
+    assert "煤球" in text, "正文不能被误删"
+
+    # 整段只有占位符时应被丢弃，不留空消息
+    ev2 = Ev("[图片]")
+    h.apply(ev2)
+    leftovers = [c.text for c in ev2._r.chain if isinstance(c, Plain) and c.text.strip()]
+    assert leftovers == [], f"应丢弃空段: {leftovers}"

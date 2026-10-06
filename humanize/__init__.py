@@ -5,7 +5,13 @@
 """
 
 from .humanizer import HumanizeResult, Humanizer
-from .stickers import StickerLibrary
+from .stickers import StickerLibrary, StickerRateLimiter
 from .typo import apply_typos
 
-__all__ = ["HumanizeResult", "Humanizer", "StickerLibrary", "apply_typos"]
+__all__ = [
+    "HumanizeResult",
+    "Humanizer",
+    "StickerLibrary",
+    "StickerRateLimiter",
+    "apply_typos",
+]

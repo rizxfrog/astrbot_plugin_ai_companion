@@ -149,6 +149,13 @@ class CompanionConfig:
         self.sticker_auto_probability = max(
             0.0, min(1.0, _as_float(self.raw.get("sticker_auto_probability"), 0.15))
         )
+        # 统一闸门：所有表情发送路径共用。0.2 = 拦掉 80%
+        self.sticker_send_probability = max(
+            0.0, min(1.0, _as_float(self.raw.get("sticker_send_probability"), 0.2))
+        )
+        self.sticker_cooldown_seconds = max(
+            0, _as_int(self.raw.get("sticker_cooldown_seconds"), 0)
+        )
         self.enable_typos = _as_bool(self.raw.get("enable_typos"), False)
         self.typo_probability = max(
             0.0, min(1.0, _as_float(self.raw.get("typo_probability"), 0.03))

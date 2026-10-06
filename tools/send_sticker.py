@@ -52,6 +52,18 @@ class SendStickerTool(FunctionTool):
         if path is None:
             return json.dumps({"ok": False, "error": "没有可用的表情包"}, ensure_ascii=False)
 
+        # 闸门：与 [sticker:x] 标记、自动补图共用同一个限流器
+        limiter = getattr(self.stickers, "limiter", None)
+        if limiter is not None:
+            ok, reason = limiter.allow(str(event.unified_msg_origin))
+            if not ok:
+                logger.debug(f"[ai_companion] 工具表情被限流：{reason}")
+                # 告诉模型「这次没发」而不是报错，避免它重试或向用户解释
+                return json.dumps(
+                    {"ok": True, "sent": False, "note": "这次先不发图，用文字回"},
+                    ensure_ascii=False,
+                )
+
         try:
             from astrbot.core.message.components import Image
 
