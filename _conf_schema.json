@@ -251,6 +251,36 @@
     "default": true,
     "hint": "回复时把该会话最近的关键事件摘一句提示给 AI，让它记得「你们之前约好过什么」。同样只占极小篇幅。"
   },
+  "_humanize_header": {
+    "description": "🎭 拟人增强",
+    "type": "text",
+    "default": "",
+    "hint": "让回复更像真人：偶尔手滑打错字、在合适的时候发表情包。分段与打字节奏请用平台自带的「分段回复」，插件不重复实现以免双重延迟。"
+  },
+  "enable_stickers": {
+    "description": "启用表情包",
+    "type": "bool",
+    "default": true,
+    "hint": "把表情包放在插件数据目录的 stickers/ 下，子目录名即情绪分类（如 stickers/开心/、stickers/无语/）。AI 会在回复里写 [sticker:开心] 主动发表情，也可以在配置里让它按概率自动补一张。"
+  },
+  "sticker_auto_probability": {
+    "description": "自动补表情概率",
+    "type": "float",
+    "default": 0.15,
+    "hint": "0~1。AI 本轮没有主动发表情时，按该概率自己补一张。设为 0 表示只在 AI 主动要求时才发。"
+  },
+  "enable_typos": {
+    "description": "启用错别字",
+    "type": "bool",
+    "default": false,
+    "hint": "默认关闭。开启后回复会偶尔出现轻微手滑（如「的/得」），更像真人。只改常见同音字，不会碰标点、数字、链接与表情标记。"
+  },
+  "typo_probability": {
+    "description": "错别字概率",
+    "type": "float",
+    "default": 0.03,
+    "hint": "0~1。整条回复出一次手误的概率（与长度无关），建议 0.02~0.05，太高会显得不可靠。"
+  },
   "debug_mode": {
     "description": "调试日志",
     "type": "bool",

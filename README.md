@@ -24,7 +24,7 @@
 
 ---
 
-## 已实现（P0 – P5）
+## 已实现（P0 – P6）
 
 - **统一群聊 / 私聊**：一个入口处理所有会话，决策链内部区分场景。
 - **回复决策链**（可插拔，按成本从低到高短路）：
@@ -53,6 +53,14 @@
 - **事件线（P5）**：像真人一样记得「我们之前约好过什么」。在与人物抽取同一次调用里
   顺带总结关键事件（约定 / 计划 / 经历 / 变化 / 冲突），入库并关联参与者；相似事件
   自动去重。回复时摘一句「最近发生的事」，也有 `recall_events` 工具按关键词回忆。
+- **拟人增强（P6）**：
+  - **表情包**：把图片按情绪分类放进 `stickers/`（子目录名即分类，如
+    `stickers/开心/`）。AI 在回复里写 `[sticker:开心]`，发送前被替换成真实图片；
+    也能按概率自动补一张。**标记绝不会泄露给用户，也不会留在聊天记录里。**
+  - **错别字**：按概率制造轻微手误（只改常见同音字，不碰标点/数字/英文/标记）。
+    默认关闭。
+  - **分段与打字延迟不重复实现**——平台自带的「分段回复」在本钩子之后立即执行，
+    并由 `RespondStage` 逐段按对数间隔发送，重复实现只会造成双重延迟。
 - **全量消息落库**：即使 AI 决定不回复也会记录（真人也记得别人说过的话）。
 - **中文历史检索**：SQLite + FTS5 `trigram`；2 字符短词自动回退 `LIKE`。
 - **LLM 工具**：`search_chat_history`，模型需要时可自行翻聊天记录。
@@ -106,6 +114,10 @@ cp -r astrbot_plugin_ai_companion /path/to/AstrBot/data/plugins/
 | `extraction_provider_id` | "" | 抽取专用模型（留空=默认模型） |
 | `inject_people_context` | true | 回复时提示相关人物 |
 | `inject_events_context` | true | 回复时提示最近发生的事 |
+| `enable_stickers` | true | 启用表情包 |
+| `sticker_auto_probability` | 0.15 | 自动补表情概率（0=只按 AI 要求发） |
+| `enable_typos` | false | 启用错别字 |
+| `typo_probability` | 0.03 | 整条回复出一次手误的概率 |
 | `system_prompt_extra` | "" | 额外系统提示词（建议精简） |
 | `inject_time` | true | 注入当前时间（临时块，不入历史） |
 | `debug_mode` | false | 输出每层决策结果 |
@@ -134,6 +146,10 @@ decision/
 context/
   renderer.py              消息链 → 可读文本
   assembler.py             动态上下文块（临时、不污染历史）
+humanize/
+  humanizer.py             发送前修饰：表情标记替换、错别字
+  stickers.py              本地表情包库（子目录即分类）
+  typo.py                  错别字混淆表
 memory/
   compactor.py             短期记忆压缩（滚动摘要）
   knowledge.py             人物画像 / 关系图谱 / 事件线抽取（增量 + 全局实体）
@@ -144,6 +160,8 @@ tools/
   history_search.py        search_chat_history 工具
   lookup_person.py         lookup_person 工具
   recall_events.py         recall_events 工具
+stickers/                  表情包目录（子目录名即情绪分类）
+  README.md                放置说明
 ```
 
 ### 数据流
@@ -197,7 +215,7 @@ sequenceDiagram
 | P3 | 主动消息（全局扫描 + 沉默触发 + 免打扰） | ✅ 已完成 |
 | P4 | 人物画像与关系图谱（`lookup_person` 工具） | ✅ 已完成 |
 | P5 | 事件线抽取与关系派生 | ✅ 已完成 |
-| P6 | 拟人增强（打字延迟 / 错字 / 表情包 / 分段） | 规划中 |
+| P6 | 拟人增强（错别字 / 表情包） | ✅ 已完成 |
 | P7 | 人格面板 / 好感度 / 专门决策模型插槽 | 插槽已预留 |
 
 ---

@@ -137,6 +137,15 @@ class CompanionConfig:
         self.inject_events_context = _as_bool(
             self.raw.get("inject_events_context"), True
         )
+        # --- 拟人增强 ---
+        self.enable_stickers = _as_bool(self.raw.get("enable_stickers"), True)
+        self.sticker_auto_probability = max(
+            0.0, min(1.0, _as_float(self.raw.get("sticker_auto_probability"), 0.15))
+        )
+        self.enable_typos = _as_bool(self.raw.get("enable_typos"), False)
+        self.typo_probability = max(
+            0.0, min(1.0, _as_float(self.raw.get("typo_probability"), 0.03))
+        )
         self.system_prompt_extra = _as_str(self.raw.get("system_prompt_extra"), "")
         self.inject_time = _as_bool(self.raw.get("inject_time"), True)
         self.debug_mode = _as_bool(self.raw.get("debug_mode"), False)

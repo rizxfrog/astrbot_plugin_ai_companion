@@ -20,7 +20,13 @@ from astrbot.api.star import Context, Star, StarTools
 from astrbot.core.config.astrbot_config import AstrBotConfig
 
 from .context import ContextAssembler
-from .core import CompanionConfig, Orchestrator, ProactiveScheduler, SessionRegistry
+from .core import (
+    MANAGED_KEY,
+    CompanionConfig,
+    Orchestrator,
+    ProactiveScheduler,
+    SessionRegistry,
+)
 from .decision import (
     DecisionChain,
     HardFilterDecider,
@@ -29,6 +35,7 @@ from .decision import (
     RateLimitDecider,
     RuleDecider,
 )
+from .humanize import Humanizer, StickerLibrary
 from .memory import Compactor, KnowledgeExtractor
 from .storage import MemoryDB
 from .tools import LookupPersonTool, RecallEventsTool, SearchHistoryTool
@@ -53,6 +60,13 @@ class AICompanionPlugin(Star):
         self.extractor: KnowledgeExtractor = KnowledgeExtractor(
             db=self.db, context=self.context, config=self.config
         )
+        self.stickers = StickerLibrary(
+            roots=[
+                StarTools.get_data_dir(PLUGIN_NAME) / "stickers",
+                Path(__file__).parent / "stickers",
+            ]
+        )
+        self.humanizer = Humanizer(stickers=self.stickers, config=self.config)
 
     # ------------------------------------------------------------------
     # 生命周期
@@ -204,8 +218,64 @@ class AICompanionPlugin(Star):
             return
         try:
             await self.orchestrator.inject(event, req)
+            self._inject_sticker_guidance(event, req)
         except Exception as e:
             logger.error(f"[ai_companion] 注入请求失败: {e}", exc_info=True)
+
+    @filter.on_decorating_result(priority=-1)
+    async def on_decorating_result(self, event: AstrMessageEvent) -> None:
+        """发送前修饰回复：表情包与错别字。
+
+        优先级 -1 让本插件在其他修饰插件之后执行，确保改的是最终文本。
+        """
+        if not self.config.enabled_for(is_private=bool(event.is_private_chat())):
+            return
+        try:
+            result = self.humanizer.apply(event)
+        except Exception as e:
+            logger.error(f"[ai_companion] 拟人化处理失败: {e}", exc_info=True)
+            return
+
+        # 归档时去掉表情标记，避免历史里残留 [sticker:xx]
+        if result.replaced:
+            self._strip_markers_from_history(event)
+
+    def _inject_sticker_guidance(self, event: AstrMessageEvent, req) -> None:
+        """把可用表情分类告诉模型，并教它用标记发表情。"""
+        cfg = self.config
+        if not cfg.enable_stickers or self.stickers.empty:
+            return
+        if not event.get_extra(MANAGED_KEY):
+            return
+        try:
+            from astrbot.core.agent.message import TextPart
+
+            categories = "、".join(self.stickers.categories()[:20])
+            hint = (
+                "<表情包>\n"
+                f"可用的表情分类：{categories}\n"
+                "想发表情时，在回复里写 [sticker:分类名]（例如 [sticker:开心]），"
+                "系统会把它换成真实表情包。不要描述图片内容，也不要解释这个标记。\n"
+                "</表情包>"
+            )
+            req.extra_user_content_parts.append(
+                TextPart(text=hint).mark_as_temp()
+            )
+        except Exception:
+            pass
+
+    def _strip_markers_from_history(self, event: AstrMessageEvent) -> None:
+        """从事件结果里清掉表情标记（图片已就位，标记不应留在文本中）。"""
+        try:
+            result = event.get_result()
+            if result is None or not result.chain:
+                return
+            for comp in result.chain:
+                text = getattr(comp, "text", None)
+                if isinstance(text, str) and "sticker" in text.lower():
+                    comp.text = Humanizer.strip_sticker_markers(text)
+        except Exception:
+            pass
 
     @filter.after_message_sent()
     async def after_message_sent(self, event: AstrMessageEvent) -> None:
