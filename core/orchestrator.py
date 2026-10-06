@@ -42,6 +42,7 @@ class TurnResult:
     extra_parts: list = field(default_factory=list)
     people_hint: str = ""
     events_hint: str = ""
+    image_urls: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -157,6 +158,42 @@ class Orchestrator:
         self._bursts.pop(umo, None)
         return lines, True
 
+    async def _collect_image_paths(self, event: Any) -> list[str]:
+        """把当前消息里的图片落成可传给模型的路径。
+
+        为什么需要这一步：本插件通过 ``yield event.request_llm(...)`` 自己包办
+        LLM 请求，而平台只在**它自己创建请求**时才扫描消息里的图片组件
+        （``_build_main_agent`` 的 else 分支）。走「已有 provider_request」分支时
+        只沿用 ``req.image_urls``，不会去读 ``event.message_obj.message``。
+        结果是用户发的图片**根本进不了模型**，模型只能看到渲染后的占位文本
+        （如 ``[图片]``），于是回「我这边全是空白」。
+
+        这里补上同样的收集动作，保持与平台行为一致。
+        """
+        out: list[str] = []
+        try:
+            from astrbot.core.message.components import Image
+        except Exception:  # pragma: no cover - 平台导入失败时静默跳过
+            return out
+        try:
+            components = list(event.message_obj.message)
+        except Exception:
+            return out
+        for comp in components:
+            if not isinstance(comp, Image):
+                continue
+            try:
+                path = await comp.convert_to_file_path()
+            except Exception as e:
+                if getattr(self.config, "debug_mode", False):
+                    logger.info(f"[ai_companion] 图片转存失败，跳过: {e}")
+                continue
+            if path:
+                out.append(path)
+        if out and getattr(self.config, "debug_mode", False):
+            logger.info(f"[ai_companion] 本轮附带 {len(out)} 张图片给模型")
+        return out
+
     @staticmethod
     def _merge_prompt(lines: list[tuple[str, str, str]]) -> str:
         """把一组消息渲染成给模型的一条提示词。"""
@@ -263,6 +300,7 @@ class Orchestrator:
         owner_event.set_extra(MANAGED_KEY, True)
         conversation = await self._ensure_conversation(umo)
         conversation = await self._maybe_compact(umo, conversation)
+        image_urls = await self._collect_image_paths(owner_event)
 
         return TurnResult(
             handled=True,
@@ -270,6 +308,7 @@ class Orchestrator:
             reason=decision.reason,
             prompt=text,
             conversation=conversation,
+            image_urls=image_urls,
             extra_parts=self.assembler.build_extra_parts(cfg),
             people_hint=(
                 await self._people_hint(sender_id)

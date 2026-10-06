@@ -873,3 +873,158 @@ def test_debounce_boundary_race_only_one_settles():
     settlers = [r for r in res if r[1]]
     assert len(settlers) == 1, \
         f"必须恰好一条结算，实际 {len(settlers)}: {[r[0] for r in settlers]}"
+
+
+# ======================================================================
+# 工具调用 XML 泄漏 + 图片输入
+# ======================================================================
+def test_tool_call_xml_stripped_from_reply():
+    """模型把工具调用当文本写进正文时，不能原样发给用户（线上实测泄漏）。"""
+    import random as _r
+
+    from astrbot.core.message.components import Plain
+    from astrbot_plugin_ai_companion.humanize import Humanizer, StickerLibrary
+
+    class Cfg:
+        enable_stickers = False
+        sticker_auto_probability = 0.0
+        enable_typos = False
+
+    lib = StickerLibrary(roots=[PLUGIN_DIR / "stickers"])
+    h = Humanizer(stickers=lib, config=Cfg(), rng=_r.Random(1))
+
+    leak = (
+        "又来了是吧😂 你这表情包在我这就没现过身，全是空白\n\n"
+        '<invoke name="send_sticker">\n'
+        '<parameter name="category">无语</parameter>\n'
+        '</invoke>'
+    )
+
+    class Res:
+        def __init__(self, text):
+            self.chain = [Plain(text)]
+
+    class Ev:
+        unified_msg_origin = "p:FriendMessage:1"
+
+        def __init__(self, text):
+            self._r = Res(text)
+
+        def get_result(self):
+            return self._r
+
+    ev = Ev(leak)
+    h.apply(ev)
+    out = "".join(c.text for c in ev._r.chain if isinstance(c, Plain))
+    assert "invoke" not in out and "parameter" not in out, f"XML 泄漏: {out!r}"
+    assert "表情包" in out, "正文不能被误删"
+
+    # antml: 前缀变体与残缺闭合标签也要清掉
+    for variant in (
+        '<antml:invoke name="send_sticker"><antml:parameter name="c">x</antml:parameter></antml:invoke>',
+        '文字 <invoke name="x"> 尾巴',
+        '</invoke>',
+    ):
+        ev2 = Ev(variant)
+        h.apply(ev2)
+        out2 = "".join(c.text for c in ev2._r.chain if isinstance(c, Plain))
+        assert "invoke" not in out2 and "parameter" not in out2, f"变体未清: {out2!r}"
+
+
+def test_tool_call_xml_stripped_in_proactive_path():
+    """主动消息路径（apply_to_text）同样要清 XML。"""
+    import random as _r
+
+    from astrbot_plugin_ai_companion.humanize import Humanizer, StickerLibrary
+
+    class Cfg:
+        enable_stickers = False
+        sticker_auto_probability = 0.0
+        enable_typos = False
+
+    lib = StickerLibrary(roots=[PLUGIN_DIR / "stickers"])
+    h = Humanizer(stickers=lib, config=Cfg(), rng=_r.Random(1))
+    text, _ = h.apply_to_text('在吗\n<invoke name="send_sticker"></invoke>')
+    assert "invoke" not in text
+    assert "在吗" in text
+
+
+def test_image_components_collected_for_model():
+    """用户发的图片必须被收集传给模型 —— 否则模型只能看到「[图片]」占位文本。
+
+    线上症状：用户发表情包，bot 回「我这边全是空白」。根因是插件自己包办
+    LLM 请求时，平台不会去扫描 event.message_obj 里的图片组件。
+    """
+    from astrbot_plugin_ai_companion.core.orchestrator import Orchestrator
+
+    class FakeImage:
+        def __init__(self, path):
+            self._path = path
+            self.converted = False
+
+        async def convert_to_file_path(self):
+            self.converted = True
+            return self._path
+
+    class FakePlain:
+        pass
+
+    class MockEvent:
+        def __init__(self, comps):
+            self.message_obj = type("O", (), {"message": comps})()
+
+    o = Orchestrator(
+        config=None, registry=None, chain=None, db=None,
+        assembler=None, conversation_manager=None,
+    )
+
+    img1, img2 = FakeImage("/tmp/a.png"), FakeImage("/tmp/b.png")
+    ev = MockEvent([FakePlain(), img1, img2])
+
+    import astrbot.core.message.components as comps
+    orig = comps.Image
+    try:
+        comps.Image = FakeImage          # 让 isinstance 判定为图片
+        paths = _run(o._collect_image_paths(ev))
+    finally:
+        comps.Image = orig
+
+    assert paths == ["/tmp/a.png", "/tmp/b.png"], f"图片未被收集: {paths}"
+    assert img1.converted, "应调用 convert_to_file_path 转存"
+
+
+def test_image_collection_survives_failure():
+    """单张图片转换失败不应影响整轮（也不该抛异常）。"""
+    from astrbot_plugin_ai_companion.core.orchestrator import Orchestrator
+
+    class BadImage:
+        async def convert_to_file_path(self):
+            raise RuntimeError("下载失败")
+
+    class GoodImage:
+        async def convert_to_file_path(self):
+            return "/tmp/ok.png"
+
+    class MockEvent:
+        def __init__(self, comps):
+            self.message_obj = type("O", (), {"message": comps})()
+
+    class _Cfg:
+        debug_mode = False
+
+    o = Orchestrator(
+        config=_Cfg(), registry=None, chain=None, db=None,
+        assembler=None, conversation_manager=None,
+    )
+
+    import astrbot.core.message.components as comps
+    orig = comps.Image
+
+    class Both(BadImage, GoodImage):
+        pass
+    try:
+        comps.Image = (BadImage, GoodImage)
+        paths = _run(o._collect_image_paths(MockEvent([BadImage(), GoodImage()])))
+    finally:
+        comps.Image = orig
+    assert paths == ["/tmp/ok.png"], f"应跳过失败项保留成功项: {paths}"

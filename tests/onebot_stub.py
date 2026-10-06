@@ -168,8 +168,22 @@ class OneBotStub:
         )
 
     async def send_private_message(
-        self, text: str, *, user_id: str = "20001", nickname: str = "测试用户"
+        self,
+        text: str,
+        *,
+        user_id: str = "20001",
+        nickname: str = "测试用户",
+        image_b64: str = "",
+        image_file: str = "",
     ) -> None:
+        message: list[dict] = []
+        if image_b64:
+            message.append(
+                {"type": "image", "data": {"file": f"base64://{image_b64}"}}
+            )
+        elif image_file:
+            message.append({"type": "image", "data": {"file": image_file}})
+        message.append({"type": "text", "data": {"text": text}})
         await self.send_event(
             {
                 "post_type": "message",
@@ -177,7 +191,7 @@ class OneBotStub:
                 "sub_type": "friend",
                 "message_id": int(time.time() * 1000) % 2_000_000_000,
                 "user_id": int(user_id),
-                "message": [{"type": "text", "data": {"text": text}}],
+                "message": message,
                 "raw_message": text,
                 "font": 0,
                 "self_id": int(self.self_id),

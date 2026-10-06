@@ -38,6 +38,19 @@ DANGLING_PLACEHOLDER_PATTERN = re.compile(
     r"\[(?:图片|image|照片|photo)\]", re.IGNORECASE
 )
 
+# 有些模型会把**工具调用当成文本写进正文**，形如：
+#     <invoke name="send_sticker"><parameter name="category">无语</parameter></invoke>
+# （Anthropic 风格，可能带 antml: 前缀）。平台的 provider 只认结构化的 tool_calls
+# 字段，不会解析这种文本，于是整段 XML 原样发给用户。这里无条件清掉 ——
+# 它永远不是想给用户看的内容。
+TOOL_CALL_XML_PATTERN = re.compile(
+    r"<(?:antml:)?invoke\b[^>]*>.*?</(?:antml:)?invoke>"
+    r"|<(?:antml:)?(?:function_calls|function_call)\b[^>]*>.*?</(?:antml:)?(?:function_calls|function_call)>"
+    r"|<(?:antml:)?invoke\b[^>]*/?>"
+    r"|</?(?:antml:)?(?:invoke|parameter|function_calls|function_call)\b[^>]*>",
+    re.IGNORECASE | re.DOTALL,
+)
+
 
 @dataclass
 class HumanizeResult:
@@ -115,6 +128,8 @@ class Humanizer:
         # 没有配图时，清掉模型留下的悬空媒体占位符
         if not images:
             text = DANGLING_PLACEHOLDER_PATTERN.sub("", text)
+        # 工具调用 XML 同样不该出现在正文里
+        text = TOOL_CALL_XML_PATTERN.sub("", text)
 
         return text.strip(), images
 
@@ -155,13 +170,15 @@ class Humanizer:
 
     @staticmethod
     def _strip_placeholders(chain: list) -> list:
-        """删除文本里残留的媒体占位符；清理后为空的段直接丢弃。"""
+        """删除文本里残留的媒体占位符与工具调用 XML；清理后为空的段直接丢弃。"""
         if Plain is None:
             return chain
         out: list = []
         for comp in chain:
             if isinstance(comp, Plain) and comp.text:
                 cleaned = DANGLING_PLACEHOLDER_PATTERN.sub("", comp.text)
+                # 工具调用 XML 绝不该出现在正文里（平台不解析它，会原样发出）
+                cleaned = TOOL_CALL_XML_PATTERN.sub("", cleaned)
                 # 顺带收掉清理后留下的多余空白/空行
                 cleaned = re.sub(r"[ \t]{2,}", " ", cleaned).strip()
                 if cleaned:

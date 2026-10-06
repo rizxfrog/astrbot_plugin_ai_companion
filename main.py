@@ -38,7 +38,11 @@ from .decision import (
     RuleDecider,
 )
 from .humanize import Humanizer, StickerLibrary, StickerRateLimiter
-from .humanize.humanizer import DANGLING_PLACEHOLDER_PATTERN, STICKER_PATTERN
+from .humanize.humanizer import (
+    DANGLING_PLACEHOLDER_PATTERN,
+    STICKER_PATTERN,
+    TOOL_CALL_XML_PATTERN,
+)
 from .memory import Compactor, KnowledgeExtractor
 from .persona import (
     build_identity_directive,
@@ -233,6 +237,7 @@ class AICompanionPlugin(Star):
         try:
             request = event.request_llm(
                 prompt=result.prompt,
+                image_urls=result.image_urls or None,
                 contexts=None,
                 conversation=result.conversation,
             )
@@ -458,7 +463,8 @@ class AICompanionPlugin(Star):
                 if isinstance(value, str) and value:
                     cleaned = Humanizer.strip_sticker_markers(value)
                     cleaned = STICKER_PATTERN.sub("", cleaned)
-                    cleaned = DANGLING_PLACEHOLDER_PATTERN.sub("", cleaned).strip()
+                    cleaned = DANGLING_PLACEHOLDER_PATTERN.sub("", cleaned)
+                    cleaned = TOOL_CALL_XML_PATTERN.sub("", cleaned).strip()
                     item[key] = cleaned
         # 丢弃被清空的段
         tool_args["messages"] = [
