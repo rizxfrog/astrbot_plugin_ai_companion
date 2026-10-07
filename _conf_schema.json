@@ -318,6 +318,49 @@
     "default": true,
     "hint": "回复时把该会话最近的关键事件摘一句提示给 AI，让它记得「你们之前约好过什么」。同样只占极小篇幅。"
   },
+  "_group_profile_header": {
+    "description": "🏘️ 群画像与熟悉度",
+    "type": "text",
+    "default": "",
+    "hint": "像真人一样融入群：先观望、逐步形成对这个群「聊什么/氛围如何/都有谁」的长期印象，熟悉度随之上升，进而更愿意主动搭话。"
+  },
+  "enable_group_profile": {
+    "description": "启用群画像",
+    "type": "bool",
+    "default": true,
+    "hint": "后台从聊天记录里滚动总结每个群的画像（类型/话题/氛围/活跃成员）。关闭则退化为只凭最近消息判断。"
+  },
+  "group_profile_provider_id": {
+    "description": "群画像使用模型",
+    "type": "string",
+    "default": "",
+    "hint": "留空用默认模型。群画像是低频总结，建议用便宜快速的小模型。",
+    "_special": "select_provider"
+  },
+  "group_profile_min_messages": {
+    "description": "开始画像的最低消息数",
+    "type": "int",
+    "default": 30,
+    "hint": "群消息不足此数不生成画像，保持观望。调小会更快开始熟悉，调大则更谨慎。"
+  },
+  "group_profile_interval": {
+    "description": "画像更新间隔（条）",
+    "type": "int",
+    "default": 50,
+    "hint": "每新增这么多条消息就更新一次群画像。值越小画像越新鲜但模型调用越多。"
+  },
+  "enable_familiarity": {
+    "description": "启用熟悉度渐进",
+    "type": "bool",
+    "default": true,
+    "hint": "熟悉度随「消息量 + 画像更新轮数 + 认识的人数」增长，群聊概率随熟悉度从基础值逐步放大。"
+  },
+  "familiarity_gate_scale": {
+    "description": "熟悉后概率放大倍数",
+    "type": "float",
+    "default": 3.0,
+    "hint": "熟悉度满时，群聊概率放大到基础值的多少倍（默认 3 倍）。例如基础 0.1、熟悉后最多 0.3。"
+  },
   "_humanize_header": {
     "description": "🎭 拟人增强",
     "type": "text",

@@ -140,3 +140,17 @@ CREATE TABLE IF NOT EXISTS event_participants (
 );
 CREATE INDEX IF NOT EXISTS idx_event_participants_entity
     ON event_participants(entity_id);
+
+-- ============================================================
+-- 群画像：对一个群的长期认知（聊什么、氛围如何、都有谁）
+--
+-- 像真人一样，对不熟的群先观望、慢慢形成印象。这份画像随新消息
+-- 滚动更新，供读空气判断「此刻该不该搭话、怎么搭」。
+-- ============================================================
+CREATE TABLE IF NOT EXISTS group_profiles (
+    umo                TEXT PRIMARY KEY,
+    profile            TEXT NOT NULL DEFAULT '',
+    message_count      INTEGER NOT NULL DEFAULT 0,
+    familiar           INTEGER NOT NULL DEFAULT 0,   -- 熟悉度 0~100
+    updated_at         REAL NOT NULL DEFAULT 0
+);

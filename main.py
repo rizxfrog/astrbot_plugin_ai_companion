@@ -42,7 +42,7 @@ from .humanize.humanizer import (
     STICKER_PATTERN,
     TOOL_CALL_XML_PATTERN,
 )
-from .memory import Compactor, KnowledgeExtractor
+from .memory import Compactor, GroupProfileManager, KnowledgeExtractor
 from .persona import (
     build_identity_directive,
     is_identity_question,
@@ -69,6 +69,9 @@ class AICompanionPlugin(Star):
         self.orchestrator: Orchestrator | None = None
         self.scheduler: ProactiveScheduler | None = None
         self.extractor: KnowledgeExtractor = KnowledgeExtractor(
+            db=self.db, context=self.context, config=self.config
+        )
+        self.group_profiles: GroupProfileManager = GroupProfileManager(
             db=self.db, context=self.context, config=self.config
         )
         self.stickers = StickerLibrary(
@@ -108,6 +111,7 @@ class AICompanionPlugin(Star):
                 config=self.config,
             ),
             extractor=self.extractor,
+            group_profiles=self.group_profiles,
         )
 
         deciders: list = [
@@ -116,16 +120,36 @@ class AICompanionPlugin(Star):
             RateLimitDecider(),
         ]
 
-        def _gate_rate(ctx) -> float:
+        async def _gate_rate(ctx) -> float:
             """群聊未 @ 时用群聊概率；其余沿用默认概率。
 
             概率在这里的含义是「**进入 AI 决策**的概率」：未命中就由代码直接
             判定不回复，只有命中的少数消息才会真正调用模型。
+
+            群聊概率随**熟悉度**渐进：对新群谨慎观望（几乎不搭话），
+            随群画像逐渐成熟而更愿意接话。这就是「像真人一样先熟悉群」
+            的量化表达。
             """
             cfg = self.config
-            if not ctx.is_private and not ctx.is_mention and cfg.group_reply_probability >= 0:
-                return cfg.group_reply_probability
-            return cfg.reply_probability
+            if ctx.is_private or ctx.is_mention or cfg.group_reply_probability < 0:
+                return cfg.reply_probability
+            return await group_gate_rate_for(ctx, self.group_profiles)
+
+        async def group_gate_rate_for(ctx, profiles) -> float:
+            cfg = self.config
+            base = float(cfg.group_reply_probability)
+            if profiles is None or not getattr(cfg, "enable_familiarity", True):
+                return base
+            try:
+                fam = await profiles.get(ctx.umo)
+            except Exception:
+                fam = None
+            if fam is None:
+                return base  # 无画像：用基础概率（通常已很低）
+            # 熟悉度 0~100 线性映射到 [base, base*scale] 之间
+            scale = max(1.0, float(getattr(cfg, "familiarity_gate_scale", 3.0)))
+            ratio = min(1.0, max(0.0, fam.level / 100.0))
+            return base + (base * (scale - 1.0)) * ratio
 
         if self.config.enable_llm_judge:
             # 概率层作为「成本闸门」：未命中直接判不回，命中才交给读空气
@@ -178,6 +202,12 @@ class AICompanionPlugin(Star):
         except Exception as e:
             logger.error(f"[ai_companion] 启动知识抽取失败: {e}", exc_info=True)
 
+        # 群画像与熟悉度：后台滚动更新
+        try:
+            await self.group_profiles.start()
+        except Exception as e:
+            logger.error(f"[ai_companion] 启动群画像失败: {e}", exc_info=True)
+
         # 主动消息调度
         self.scheduler = ProactiveScheduler(
             config=self.config,
@@ -206,6 +236,11 @@ class AICompanionPlugin(Star):
                 await self.scheduler.stop()
             except Exception as e:
                 logger.error(f"[ai_companion] 停止主动消息失败: {e}", exc_info=True)
+        if self.group_profiles is not None:
+            try:
+                await self.group_profiles.stop()
+            except Exception as e:
+                logger.error(f"[ai_companion] 停止群画像失败: {e}", exc_info=True)
         await self.db.close()
         logger.info("[ai_companion] 插件已停止")
 

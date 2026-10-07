@@ -6,6 +6,32 @@
 
 ## [未发布]
 
+## [v0.11.0] - 2026-10-07
+
+### 新增
+
+- **群画像与熟悉度**：像真人一样融入群——先观望、逐步形成对这个群
+  「聊什么/氛围如何/都有谁」的长期印象，熟悉度随之上升，进而更愿意主动搭话。
+  - 新表 `group_profiles`：每个群的滚动更新画像，跨重启保留
+  - 后台循环按消息增量更新画像（观察 → 合并成新画像）
+  - 熟悉度 0~100，由「消息量 + 画像轮次 + 认识的人数」驱动，映射三档
+    （观望 / 融入 / 熟悉）
+  - 群聊概率随熟悉度渐进：`group_reply_probability` 作为基础值，
+    熟悉度满时最多放大到 `familiarity_gate_scale` 倍（默认 3）
+
+### 修复
+
+- **读空气从不知群为何物**：`_judge` 此前只拿到最近 10 条消息 + 固定提示词，
+  因此对不熟的群只会判断「话题与我无关、插不上话」，24 小时日志里
+  105 次判断全否、1 次放行。现在把「群画像 + 对发言者的了解 + 最近事件」
+  一并注入读空气，让判断有据可依。
+
+### 变更
+
+- 读空气提示词从「矜持旁观」改为「渐进式群友」：不熟的群少说多看，
+  熟悉的群对懂的话题自然接一句
+- `ProbabilityDecider` 的 `rate` 回调支持异步（需查库取熟悉度）
+
 ## [v0.10.1] - 2026-10-06
 
 ### 修复
@@ -144,7 +170,8 @@
   - 全量消息落库（SQLite + FTS5 trigram 中文检索）
   - 精简动态上下文注入
 
-[未发布]: https://github.com/rizxfrog/astrbot_plugin_ai_companion/compare/v0.10.1...HEAD
+[未发布]: https://github.com/rizxfrog/astrbot_plugin_ai_companion/compare/v0.11.0...HEAD
+[v0.11.0]: https://github.com/rizxfrog/astrbot_plugin_ai_companion/compare/v0.10.1...v0.11.0
 [v0.10.1]: https://github.com/rizxfrog/astrbot_plugin_ai_companion/compare/v0.10.0...v0.10.1
 [v0.10.0]: https://github.com/rizxfrog/astrbot_plugin_ai_companion/compare/v0.9.0...v0.10.0
 [v0.9.0]: https://github.com/rizxfrog/astrbot_plugin_ai_companion/compare/v0.8.2...v0.9.0

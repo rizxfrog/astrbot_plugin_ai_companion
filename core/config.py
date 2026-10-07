@@ -124,6 +124,18 @@ class CompanionConfig:
         self.extraction_batch_size = max(5, _as_int(self.raw.get("extraction_batch_size"), 40))
         self.inject_people_context = _as_bool(self.raw.get("inject_people_context"), True)
         self.inject_events_context = _as_bool(self.raw.get("inject_events_context"), True)
+        # --- 群画像与熟悉度 ---
+        self.enable_group_profile = _as_bool(self.raw.get("enable_group_profile"), True)
+        self.group_profile_provider_id = _as_str(self.raw.get("group_profile_provider_id"), "")
+        self.group_profile_min_messages = max(
+            10, _as_int(self.raw.get("group_profile_min_messages"), 30)
+        )
+        self.group_profile_interval = max(10, _as_int(self.raw.get("group_profile_interval"), 50))
+        self.enable_familiarity = _as_bool(self.raw.get("enable_familiarity"), True)
+        # 熟悉度提升后，群聊概率最多放大到 base 的多少倍（3 = 最多 3 倍）
+        self.familiarity_gate_scale = max(
+            1.0, _as_float(self.raw.get("familiarity_gate_scale"), 3.0)
+        )
         # --- 拟人增强 ---
         self.enable_stickers = _as_bool(self.raw.get("enable_stickers"), True)
         self.sticker_auto_probability = max(

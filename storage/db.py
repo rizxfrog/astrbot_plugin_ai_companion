@@ -704,6 +704,54 @@ class MemoryDB:
             return []
 
     # ------------------------------------------------------------------
+    # 群画像
+    # ------------------------------------------------------------------
+    async def get_group_profile(self, umo: str) -> sqlite3.Row | None:
+        def _op():
+            return self._execute(
+                "SELECT * FROM group_profiles WHERE umo = ?",
+                (umo,),
+                fetch="one",
+            )
+
+        return await self._run(_op)
+
+    async def upsert_group_profile(
+        self,
+        *,
+        umo: str,
+        profile: str,
+        message_count: int,
+        familiar: int,
+    ) -> None:
+        def _op() -> None:
+            self._execute(
+                "INSERT INTO group_profiles "
+                "(umo, profile, message_count, familiar, updated_at) "
+                "VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(umo) DO UPDATE SET "
+                "profile = excluded.profile, "
+                "message_count = excluded.message_count, "
+                "familiar = excluded.familiar, "
+                "updated_at = excluded.updated_at",
+                (umo, profile, message_count, familiar, time.time()),
+                commit=True,
+            )
+
+        await self._run(_op)
+
+    async def count_messages_in(self, umo: str) -> int:
+        def _op():
+            row = self._execute(
+                "SELECT COUNT(*) AS c FROM messages WHERE umo = ?",
+                (umo,),
+                fetch="one",
+            )
+            return int(row["c"]) if row else 0
+
+        return await self._run(_op)
+
+    # ------------------------------------------------------------------
     # 统计
     # ------------------------------------------------------------------
     async def distinct_sessions(self) -> list[str]:

@@ -1166,3 +1166,117 @@ def test_burst_merges_images_from_multiple_messages():
     assert len(settlers) == 1
     _lines, _ok, images = settlers[0]
     assert images == ["/a.png", "/b.png"], f"应去重合并，实际 {images}"
+
+
+# ======================================================================
+# 群画像与熟悉度
+# ======================================================================
+def test_compute_familiarity_monotonic():
+    """消息越多、画像轮次越多、认识的人越多，熟悉度越高且封顶 100。"""
+    from astrbot_plugin_ai_companion.memory import compute_familiarity
+
+    assert compute_familiarity(message_count=0, profile_rounds=0, known_people=0) == 0
+    a = compute_familiarity(message_count=50, profile_rounds=1, known_people=2)
+    b = compute_familiarity(message_count=200, profile_rounds=2, known_people=6)
+    c = compute_familiarity(message_count=2000, profile_rounds=10, known_people=100)
+    assert a < b < c
+    assert c == 100, f"应封顶 100，实际 {c}"
+
+
+def test_familiarity_stage_mapping():
+    """熟悉度映射到 观望/融入/熟悉 三档。"""
+    from astrbot_plugin_ai_companion.memory import familiarity_stage
+
+    assert familiarity_stage(0) == "观望"
+    assert familiarity_stage(49) == "观望"
+    assert familiarity_stage(50) == "融入"
+    assert familiarity_stage(199) == "融入"
+    assert familiarity_stage(200) == "熟悉"
+
+
+def test_group_profile_db_roundtrip():
+    """群画像写入后可读回，且 upsert 更新。"""
+
+    async def run(db):
+        await db.connect()
+        await db.upsert_group_profile(
+            umo="p:GroupMessage:1", profile="少前游戏群", message_count=100, familiar=40
+        )
+        row = await db.get_group_profile("p:GroupMessage:1")
+        assert row["profile"] == "少前游戏群"
+        assert row["familiar"] == 40
+        # 二次 upsert 更新
+        await db.upsert_group_profile(
+            umo="p:GroupMessage:1", profile="少前游戏群(硬核)", message_count=200, familiar=70
+        )
+        row2 = await db.get_group_profile("p:GroupMessage:1")
+        assert row2["profile"].endswith("硬核)")
+        assert row2["familiar"] == 70
+        await db.close()
+
+    import tempfile
+    from pathlib import Path
+
+    from astrbot_plugin_ai_companion.storage import MemoryDB
+
+    schema = PLUGIN_DIR / "storage" / "schema.sql"
+    tmp = Path(tempfile.mkdtemp()) / "t.db"
+    _run(run(MemoryDB(db_path=tmp, schema_path=schema)))
+
+
+def test_probability_async_rate_provider():
+    """异步概率回调（群熟悉度场景）能被正确 await。"""
+    from astrbot_plugin_ai_companion.decision import ProbabilityDecider, TurnContext
+
+    class Cfg:
+        reply_probability = 0.1
+
+    class Ev:
+        def get_self_id(self):
+            return "bot"
+
+    async def async_rate(ctx):
+        return 0.5
+
+    dec = ProbabilityDecider(rng=_AlwaysZeroRng(), rate=async_rate, defer_on_fail=True)
+    ctx = TurnContext(
+        event=Ev(),
+        umo="p:GroupMessage:1",
+        actor=type("A", (), {})(),
+        config=Cfg(),
+        is_private=False,
+        is_mention=False,
+        is_command=False,
+        message_text="hi",
+        sender_id="u1",
+        sender_name="x",
+        self_id="bot",
+    )
+    # roll=0.0 < 0.5 -> 弃权（交给读空气）
+    d = _run(dec.decide(ctx))
+    assert d is None, f"异步 rate=0.5 且 roll=0 应弃权，实际 {d}"
+
+
+def test_group_profile_manager_skips_below_min():
+    """消息不足最低数时，不生成画像。"""
+
+    async def run():
+        from astrbot_plugin_ai_companion.memory.group_profile import GroupProfileManager
+
+        class Cfg:
+            enable_group_profile = True
+            group_profile_min_messages = 30
+            group_profile_interval = 50
+
+        class Db:
+            async def count_messages_in(self, umo):
+                return 10
+
+            async def get_group_profile(self, umo):
+                return None
+
+        m = GroupProfileManager(db=Db(), context=None, config=Cfg())
+        updated = await m.update_if_due("p:GroupMessage:1")
+        return updated
+
+    assert _run(run()) is False

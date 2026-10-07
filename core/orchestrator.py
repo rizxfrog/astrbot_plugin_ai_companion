@@ -69,6 +69,7 @@ class Orchestrator:
         context: Any = None,
         compactor: Any = None,
         extractor: Any = None,
+        group_profiles: Any = None,
     ) -> None:
         self.config = config
         self.registry = registry
@@ -79,6 +80,7 @@ class Orchestrator:
         self.context = context
         self.compactor = compactor
         self.extractor = extractor
+        self.group_profiles = group_profiles
         self._bg_tasks: set[Any] = set()
         self._seen: dict[str, float] = {}
         # 「连发合并」状态：umo -> 该会话正在累积的消息串
@@ -404,8 +406,11 @@ class Orchestrator:
     async def _judge(self, ctx: TurnContext) -> dict | None:
         """一次轻量 LLM 调用，判断「此刻想不想接这句话」。
 
-        刻意不走平台 Agent 链路：没有工具、没有人格、上下文极小，
-        因此又快又便宜，也不会污染主对话历史。
+        刻意不走平台 Agent 链路：没有工具、上下文极小，又快又便宜，
+        也不会污染主对话历史。
+
+        但**必须**带上「对群的认知」——否则模型对这个群一无所知，
+        只会判断「话题与我无关、插不上话」（详见记忆层群画像）。
         """
         provider = await self._resolve_judge_provider(ctx.umo)
         if provider is None:
@@ -414,13 +419,28 @@ class Orchestrator:
             return None
 
         recent = "\n".join(ctx.recent_lines) if ctx.recent_lines else "（暂无）"
-        user_prompt = (
-            f"最近的消息：\n{recent}\n\n"
-            f"即将判断的这条：{ctx.sender_name or '某人'}: {ctx.message_text}"
-        )
+
+        # 群认知：群画像（长期）+ 对发言者的了解 + 最近发生的事
+        group_hint = await self._group_hint(ctx)
+        people_hint = ""
+        if getattr(ctx.config, "inject_people_context", True):
+            people_hint = await self._people_hint(ctx.sender_id)
+        events_hint = ""
+        if getattr(ctx.config, "inject_events_context", True):
+            events_hint = await self._events_hint(ctx.umo)
+
+        parts = [f"最近的消息：\n{recent}"]
+        if group_hint:
+            parts.append(f"你对这个群的了解：{group_hint}")
+        if people_hint:
+            parts.append(f"你对发言者的了解：{people_hint}")
+        if events_hint:
+            parts.append(f"最近发生的事：{events_hint}")
+        parts.append(f"即将判断的这条：{ctx.sender_name or '某人'}: {ctx.message_text}")
+        user_prompt = "\n\n".join(parts)
 
         if ctx.config.debug_mode:
-            logger.info(f"[ai_companion] 读空气请求:\n{user_prompt[:400]}")
+            logger.info(f"[ai_companion] 读空气请求:\n{user_prompt[:600]}")
 
         resp = await provider.text_chat(
             prompt=user_prompt,
@@ -434,6 +454,18 @@ class Orchestrator:
             logger.info(f"[ai_companion] 读空气原始输出: {raw[:200]!r}")
             logger.info(f"[ai_companion] 读空气解析结果: {parsed}")
         return parsed
+
+    async def _group_hint(self, ctx: TurnContext) -> str:
+        """摘一段「对这个群的了解」，随熟悉度决定是否给出。"""
+        if self.group_profiles is None or ctx.is_private:
+            return ""
+        try:
+            fam = await self.group_profiles.get(ctx.umo)
+        except Exception:
+            return ""
+        if fam is None or not fam.profile:
+            return ""
+        return fam.profile
 
     async def _resolve_judge_provider(self, umo: str) -> Any:
         """解析读空气使用的 Provider：优先配置指定，否则用会话默认。"""

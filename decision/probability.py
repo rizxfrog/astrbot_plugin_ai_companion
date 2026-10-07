@@ -16,13 +16,15 @@
 
 from __future__ import annotations
 
+import inspect
 import random
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 from .base import Decision, ReplyDecider, TurnContext, reply, skip
 
-# 由编排层注入：根据本轮上下文决定「进入 AI 决策的概率」
-RateProvider = Callable[[TurnContext], float]
+# 由编排层注入：根据本轮上下文决定「进入 AI 决策的概率」。
+# 支持同步与异步两种回调：需要查库（如群熟悉度）时用异步。
+RateProvider = Callable[[TurnContext], float | Awaitable[float]]
 
 
 class ProbabilityDecider(ReplyDecider):
@@ -49,10 +51,13 @@ class ProbabilityDecider(ReplyDecider):
         self._rate = rate
 
     # ------------------------------------------------------------------
-    def _resolve_rate(self, ctx: TurnContext) -> float:
+    async def _resolve_rate(self, ctx: TurnContext) -> float:
         if self._rate is not None:
             try:
-                return max(0.0, min(1.0, float(self._rate(ctx))))
+                result = self._rate(ctx)
+                if inspect.isawaitable(result):
+                    result = await result
+                return max(0.0, min(1.0, float(result)))
             except Exception:
                 pass
         return max(0.0, min(1.0, float(ctx.config.reply_probability)))
@@ -63,7 +68,7 @@ class ProbabilityDecider(ReplyDecider):
 
     # ------------------------------------------------------------------
     async def decide(self, ctx: TurnContext) -> Decision | None:
-        p = self._resolve_rate(ctx)
+        p = await self._resolve_rate(ctx)
         label = self.pass_label()
 
         if p >= 1.0:
